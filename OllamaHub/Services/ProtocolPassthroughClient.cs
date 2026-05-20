@@ -10,20 +10,87 @@ public interface IProtocolPassthroughClient
     Task ProxyAsync<TRequest>(HttpContext httpContext, ResolvedModelConfig model, string apiMode, string upstreamPath, TRequest payload, CancellationToken cancellationToken);
 }
 
-public sealed class ProtocolPassthroughClient(HttpClient httpClient) : IProtocolPassthroughClient
+public sealed class ProtocolPassthroughClient(HttpClient httpClient, ILogger<ProtocolPassthroughClient> logger) : IProtocolPassthroughClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task ProxyAsync<TRequest>(HttpContext httpContext, ResolvedModelConfig model, string apiMode, string upstreamPath, TRequest payload, CancellationToken cancellationToken)
     {
         using var upstreamRequest = BuildRequestMessage(httpContext, model, apiMode, upstreamPath, payload);
+        var requestBody = await GetRequestBodyAsync(upstreamRequest, cancellationToken);
         using var upstreamResponse = await httpClient.SendAsync(upstreamRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
         httpContext.Response.StatusCode = (int)upstreamResponse.StatusCode;
         CopyResponseHeaders(upstreamResponse, httpContext.Response);
 
         await using var responseStream = await upstreamResponse.Content.ReadAsStreamAsync(cancellationToken);
-        await responseStream.CopyToAsync(httpContext.Response.Body, cancellationToken);
+        await using var buffer = new MemoryStream();
+        await responseStream.CopyToAsync(buffer, cancellationToken);
+        buffer.Position = 0;
+
+        var contentType = upstreamResponse.Content.Headers.ContentType?.ToString()
+            ?? httpContext.Response.ContentType
+            ?? "application/octet-stream";
+
+        var responseBody = await ReadBodyAsStringAsync(buffer, upstreamResponse.Content.Headers.ContentType?.CharSet, cancellationToken);
+
+        if (upstreamResponse.IsSuccessStatusCode)
+        {
+            logger.LogInformation(
+                "Passthrough response {ApiMode} {Path} ({StatusCode}, {ContentType}): {ResponseBody}",
+                apiMode,
+                upstreamPath,
+                (int)upstreamResponse.StatusCode,
+                contentType,
+                responseBody);
+        }
+        else
+        {
+            logger.LogError(
+                "Passthrough request failed {ApiMode} {Path}. RequestBody: {RequestBody}. Response ({StatusCode}, {ContentType}): {ResponseBody}",
+                apiMode,
+                upstreamPath,
+                requestBody,
+                (int)upstreamResponse.StatusCode,
+                contentType,
+                responseBody);
+        }
+
+        buffer.Position = 0;
+        await buffer.CopyToAsync(httpContext.Response.Body, cancellationToken);
+    }
+
+    private static async Task<string> GetRequestBodyAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.Content is null)
+        {
+            return string.Empty;
+        }
+
+        return await request.Content.ReadAsStringAsync(cancellationToken);
+    }
+
+    private static async Task<string> ReadBodyAsStringAsync(Stream stream, string? charset, CancellationToken cancellationToken)
+    {
+        using var reader = new StreamReader(stream, GetEncoding(charset), detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+        return await reader.ReadToEndAsync(cancellationToken);
+    }
+
+    private static Encoding GetEncoding(string? charset)
+    {
+        if (string.IsNullOrWhiteSpace(charset))
+        {
+            return Encoding.UTF8;
+        }
+
+        try
+        {
+            return Encoding.GetEncoding(charset);
+        }
+        catch
+        {
+            return Encoding.UTF8;
+        }
     }
 
     private static HttpRequestMessage BuildRequestMessage<TRequest>(HttpContext httpContext, ResolvedModelConfig model, string apiMode, string upstreamPath, TRequest payload)

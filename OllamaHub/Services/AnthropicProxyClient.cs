@@ -14,21 +14,37 @@ public interface IAnthropicProxyClient
     Task<(HttpStatusCode StatusCode, Stream? Stream, string? Error)> SendStreamAsync(ResolvedModelConfig model, AnthropicMessagesRequest request, CancellationToken cancellationToken);
 }
 
-public sealed class AnthropicProxyClient(HttpClient httpClient) : IAnthropicProxyClient
+public sealed class AnthropicProxyClient(HttpClient httpClient, ILogger<AnthropicProxyClient> logger) : IAnthropicProxyClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<(HttpStatusCode StatusCode, AnthropicMessagesResponse? Response, string? Error)> SendAsync(ResolvedModelConfig model, AnthropicMessagesRequest request, CancellationToken cancellationToken)
     {
         using var message = BuildRequestMessage(model, request);
+        var requestBody = await message.Content!.ReadAsStringAsync(cancellationToken);
         using var response = await httpClient.SendAsync(message, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+
         if (!response.IsSuccessStatusCode)
         {
-            return (response.StatusCode, null, await ReadErrorAsync(response, cancellationToken));
+            logger.LogError(
+                "Anthropic request failed {Path}. RequestBody: {RequestBody}. Response ({StatusCode}, {ContentType}): {ResponseBody}",
+                message.RequestUri?.AbsolutePath ?? "/v1/messages",
+                requestBody,
+                (int)response.StatusCode,
+                response.Content.Headers.ContentType?.ToString() ?? "application/json",
+                body);
+            return (response.StatusCode, null, ReadError(body, response.StatusCode));
         }
 
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        var result = await JsonSerializer.DeserializeAsync<AnthropicMessagesResponse>(stream, JsonOptions, cancellationToken);
+        logger.LogInformation(
+            "Anthropic response {Path} ({StatusCode}, {ContentType}): {ResponseBody}",
+            message.RequestUri?.AbsolutePath ?? "/v1/messages",
+            (int)response.StatusCode,
+            response.Content.Headers.ContentType?.ToString() ?? "application/json",
+            body);
+
+        var result = JsonSerializer.Deserialize<AnthropicMessagesResponse>(body, JsonOptions);
         if (result is null)
         {
             return (HttpStatusCode.BadGateway, null, "Anthropic 返回了空响应。");
@@ -40,10 +56,20 @@ public sealed class AnthropicProxyClient(HttpClient httpClient) : IAnthropicProx
     public async Task<(HttpStatusCode StatusCode, Stream? Stream, string? Error)> SendStreamAsync(ResolvedModelConfig model, AnthropicMessagesRequest request, CancellationToken cancellationToken)
     {
         var message = BuildRequestMessage(model, request);
+        var requestBody = await message.Content!.ReadAsStringAsync(cancellationToken);
         var response = await httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var error = await ReadErrorAsync(response, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            logger.LogError(
+                "Anthropic request failed {Path}. RequestBody: {RequestBody}. Response ({StatusCode}, {ContentType}): {ResponseBody}",
+                message.RequestUri?.AbsolutePath ?? "/v1/messages",
+                requestBody,
+                (int)response.StatusCode,
+                response.Content.Headers.ContentType?.ToString() ?? "application/json",
+                body);
+
+            var error = ReadError(body, response.StatusCode);
             response.Dispose();
             message.Dispose();
             return (response.StatusCode, null, error);
@@ -75,17 +101,16 @@ public sealed class AnthropicProxyClient(HttpClient httpClient) : IAnthropicProx
         return message;
     }
 
-    private static async Task<string> ReadErrorAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    private static string ReadError(string body, HttpStatusCode statusCode)
     {
         try
         {
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var error = await JsonSerializer.DeserializeAsync<AnthropicErrorEnvelope>(stream, JsonOptions, cancellationToken);
-            return error?.Error?.Message ?? $"Anthropic 请求失败，状态码 {(int)response.StatusCode}。";
+            var error = JsonSerializer.Deserialize<AnthropicErrorEnvelope>(body, JsonOptions);
+            return error?.Error?.Message ?? $"Anthropic 请求失败，状态码 {(int)statusCode}。";
         }
         catch
         {
-            return $"Anthropic 请求失败，状态码 {(int)response.StatusCode}。";
+            return $"Anthropic 请求失败，状态码 {(int)statusCode}。";
         }
     }
 }
