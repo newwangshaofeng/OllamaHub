@@ -1,10 +1,14 @@
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace OllamaHub.Configuration;
 
 public sealed class OllamaHubConfig
 {
+    [JsonPropertyName("logging")]
+    public LoggingConfig? Logging { get; init; }
+
     [JsonPropertyName("host")]
     public string? Host { get; init; }
 
@@ -132,4 +136,31 @@ public sealed class ResolvedModelConfig
 public sealed class ResolvedServerConfig
 {
     public IReadOnlyList<string> Urls { get; init; } = [];
+}
+
+public sealed class ResolvedAppConfig
+{
+    public ResolvedServerConfig Server { get; init; } = new();
+
+    public LoggingConfig Logging { get; init; } = new();
+
+    public IReadOnlyList<ResolvedModelConfig> Models { get; init; } = [];
+}
+
+public sealed class LoggingConfig
+{
+    [JsonPropertyName("level")]
+    public string? Level { get; init; }
+
+    public LogLevel GetLogLevel()
+    {
+        return Level?.Trim().ToLowerInvariant() switch
+        {
+            "none" => LogLevel.None,
+            "error" => LogLevel.Error,
+            "warning" => LogLevel.Warning,
+            "info" => LogLevel.Information,
+            _ => LogLevel.None
+        };
+    }
 }

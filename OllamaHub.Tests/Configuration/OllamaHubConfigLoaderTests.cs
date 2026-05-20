@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using OllamaHub.Configuration;
 using Xunit;
@@ -171,5 +172,62 @@ public sealed class OllamaHubConfigLoaderTests
         {
             File.Delete(configPath);
         }
+    }
+
+    [Fact]
+    public void LoadLogging_ResolvesConfiguredLevel()
+    {
+        var configPath = Path.GetTempFileName();
+
+        try
+        {
+            File.WriteAllText(configPath, """
+            {
+              "logging": {
+                "level": "Error"
+              },
+              "models": []
+            }
+            """);
+
+            var logging = OllamaHubConfigLoader.LoadConfig(configPath, NullLogger.Instance).Logging;
+
+            Assert.Equal(LogLevel.Error, logging.GetLogLevel());
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public void LoadConfig_DefaultsLoggingToNoneWhenSectionIsMissing()
+    {
+        var configPath = Path.GetTempFileName();
+
+        try
+        {
+            File.WriteAllText(configPath, """
+            {
+              "models": []
+            }
+            """);
+
+            var logging = OllamaHubConfigLoader.LoadConfig(configPath, NullLogger.Instance).Logging;
+
+            Assert.Equal(LogLevel.None, logging.GetLogLevel());
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public void LoggingConfig_DefaultsToNoneWhenLevelIsMissing()
+    {
+        var logging = new LoggingConfig();
+
+        Assert.Equal(LogLevel.None, logging.GetLogLevel());
     }
 }

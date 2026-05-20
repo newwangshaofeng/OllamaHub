@@ -1,4 +1,5 @@
 ﻿using System.Net;
+using Microsoft.Extensions.Logging;
 using OllamaHub.Configuration;
 using OllamaHub.Contracts;
 using OllamaHub.Logging;
@@ -6,15 +7,17 @@ using OllamaHub.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 var logPath = Path.Combine(AppContext.BaseDirectory, "OllamaHub.log");
-
-builder.Logging.AddProvider(new FileLoggerProvider(logPath));
+var configPath = Path.Combine(AppContext.BaseDirectory, OllamaHubConfigLoader.DefaultConfigFileName);
 
 var startupLogger = LoggerFactory.Create(logging => logging.AddSimpleConsole()).CreateLogger("Startup");
-var serverConfig = OllamaHubConfigLoader.LoadServer(Path.Combine(AppContext.BaseDirectory, OllamaHubConfigLoader.DefaultConfigFileName), startupLogger);
+var appConfig = OllamaHubConfigLoader.LoadConfig(configPath, startupLogger);
+var minLogLevel = appConfig.Logging.GetLogLevel();
 
-if (serverConfig.Urls.Count > 0)
+builder.Logging.AddProvider(new FileLoggerProvider(logPath, minLogLevel));
+
+if (appConfig.Server.Urls.Count > 0)
 {
-    builder.WebHost.UseUrls(serverConfig.Urls.ToArray());
+    builder.WebHost.UseUrls(appConfig.Server.Urls.ToArray());
 }
 
 builder.Services.ConfigureHttpJsonOptions(options =>

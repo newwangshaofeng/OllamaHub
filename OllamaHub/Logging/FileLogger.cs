@@ -3,25 +3,25 @@ using Microsoft.Extensions.Logging;
 
 namespace OllamaHub.Logging;
 
-public sealed class FileLoggerProvider(string filePath) : ILoggerProvider
+public sealed class FileLoggerProvider(string filePath, LogLevel minLogLevel) : ILoggerProvider
 {
     private readonly ConcurrentDictionary<string, FileLogger> _loggers = new(StringComparer.OrdinalIgnoreCase);
 
     public ILogger CreateLogger(string categoryName) =>
-        _loggers.GetOrAdd(categoryName, name => new FileLogger(name, filePath));
+        _loggers.GetOrAdd(categoryName, name => new FileLogger(name, filePath, minLogLevel));
 
     public void Dispose()
     {
     }
 }
 
-internal sealed class FileLogger(string categoryName, string filePath) : ILogger
+internal sealed class FileLogger(string categoryName, string filePath, LogLevel minLogLevel) : ILogger
 {
     private static readonly Lock WriteLock = new();
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
-    public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
+    public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None && logLevel >= minLogLevel;
 
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
     {

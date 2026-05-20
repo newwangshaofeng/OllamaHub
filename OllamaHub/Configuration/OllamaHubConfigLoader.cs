@@ -9,6 +9,8 @@ public interface IOllamaHubConfigProvider
 {
     string ConfigPath { get; }
 
+    ResolvedAppConfig GetConfig();
+
     IReadOnlyList<string> GetServerUrls();
 
     IReadOnlyList<ResolvedModelConfig> GetModels();
@@ -29,16 +31,19 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
 
     private readonly IReadOnlyList<ResolvedModelConfig> _models;
     private readonly IReadOnlyList<string> _serverUrls;
+    private readonly ResolvedAppConfig _config;
 
     public OllamaHubConfigLoader(ILogger<OllamaHubConfigLoader> logger)
     {
         ConfigPath = Path.Combine(AppContext.BaseDirectory, DefaultConfigFileName);
-        var resolved = Load(ConfigPath, logger);
-        _models = resolved.Models;
-        _serverUrls = resolved.Server.Urls;
+        _config = Load(ConfigPath, logger);
+        _models = _config.Models;
+        _serverUrls = _config.Server.Urls;
     }
 
     public string ConfigPath { get; }
+
+    public ResolvedAppConfig GetConfig() => _config;
 
     public IReadOnlyList<string> GetServerUrls() => _serverUrls;
 
@@ -46,9 +51,13 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
 
     public ResolvedModelConfig? FindModel(string modelName) => FindModel(_models, modelName);
 
+    internal static ResolvedAppConfig LoadConfig(string configPath, ILogger logger) => Load(configPath, logger);
+
     internal static IReadOnlyList<ResolvedModelConfig> LoadModels(string configPath, ILogger logger) => Load(configPath, logger).Models;
 
     internal static ResolvedServerConfig LoadServer(string configPath, ILogger logger) => Load(configPath, logger).Server;
+
+    internal static LoggingConfig LoadLogging(string configPath, ILogger logger) => Load(configPath, logger).Logging;
 
     internal static ResolvedModelConfig? FindModel(IReadOnlyList<ResolvedModelConfig> models, string? modelName)
     {
@@ -89,12 +98,12 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
         return candidates;
     }
 
-    private static (ResolvedServerConfig Server, IReadOnlyList<ResolvedModelConfig> Models) Load(string configPath, ILogger logger)
+    private static ResolvedAppConfig Load(string configPath, ILogger logger)
     {
         if (!File.Exists(configPath))
         {
             logger.LogWarning("Config file not found: {ConfigPath}", configPath);
-            return (new ResolvedServerConfig(), []);
+            return new ResolvedAppConfig();
         }
 
         using var stream = File.OpenRead(configPath);
@@ -103,7 +112,7 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
         if (config is null)
         {
             logger.LogWarning("Config file is empty or invalid: {ConfigPath}", configPath);
-            return (new ResolvedServerConfig(), []);
+            return new ResolvedAppConfig();
         }
 
         var server = new ResolvedServerConfig
@@ -170,7 +179,12 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
         }
 
         logger.LogInformation("Loaded {Count} model(s) from {ConfigPath}", models.Count, configPath);
-        return (server, models);
+        return new ResolvedAppConfig
+        {
+            Server = server,
+            Logging = config.Logging ?? new LoggingConfig(),
+            Models = models
+        };
     }
 
     private static IReadOnlyList<string> ResolveApiModes(string? modelApiMode, string? providerApiMode)
