@@ -1,0 +1,191 @@
+# OllamaHub
+
+OllamaHub 是一个本地 HTTP 代理服务，对外模拟部分 Ollama API，对内把请求转发到 Anthropic Messages API，方便在 Visual Studio Copilot Chat 的 BYOM 场景中把 Ollama 入口桥接到其他模型提供商。
+
+当前版本目标：
+- 对外兼容 Visual Studio Copilot Chat BYOM 常用的 Ollama 接口
+- 配置文件格式尽量兼容 [oai-compatible-copilot](https://github.com/JohnnyZ93/oai-compatible-copilot)
+- 当前仅实现转发到 Anthropic，后续可扩展其他提供商
+
+## 已支持接口
+
+- `GET /`
+- `GET /api/version`
+- `GET /api/tags`
+- `GET /api/ps`
+- `POST /api/show`
+- `POST /api/chat`
+
+其中：
+- `/api/tags` 用于返回可用模型列表
+- `/api/show` 用于返回模型详情
+- `/api/chat` 支持非流式和流式聊天转发
+
+## 配置文件
+
+配置文件名固定为：
+
+- `settings.json`
+
+配置文件位置：
+
+- 与可执行文件同级目录
+
+例如发布后为：
+
+- `OllamaHub.exe`
+- `settings.json`
+
+## 配置格式
+
+配置结构尽量兼容 `oai-compatible-copilot` 的 `providers` / `models` 风格。
+
+当前实际使用到的字段：
+
+### 根字段
+
+- `host`: 可选，监听主机名或 IP，与 `port` 配合使用
+- `port`: 可选，监听端口，与 `host` 配合使用
+- `url`: 可选，单个监听地址，例如 `http://127.0.0.1:11434`
+- `baseUrl`: 可选，全局默认上游 base URL
+- `providers`: 可选，供应商列表
+- `models`: 必填，模型列表
+
+监听地址解析优先级：
+
+1. `url`
+2. `host + port`
+
+如果两者都不配置，则回退到 ASP.NET Core 默认监听方式。
+
+### provider 字段
+
+- `id`: 供应商 ID
+- `baseUrl`: 供应商基础地址
+- `apiKey`: API Key
+- `apiMode`: 当前需要为 `anthropic`
+- `headers`: 可选，自定义请求头
+
+### model 字段
+
+- `id`: 模型 ID，同时作为 Anthropic 模型名
+- `displayName`: 可选，显示名称
+- `configId`: 可选，用于同模型多配置；暴露给 Ollama 时会显示为 `id::configId`
+- `owned_by` / `provider` / `provide`: 提供商 ID，三者任选其一
+- `family`: 可选，默认 `claude`
+- `baseUrl`: 可选，覆盖 provider/baseUrl
+- `apiKey`: 可选，覆盖 provider/apiKey
+- `apiMode`: 当前必须为 `anthropic`
+- `context_length`: 可选，默认 `128000`
+- `max_tokens`: 可选，默认 `4096`
+- `temperature`: 可选
+- `top_p`: 可选
+- `headers`: 可选，模型级自定义请求头
+- `extra`: 可选，原样合并到 Anthropic 请求体
+
+## 示例配置
+
+见仓库中的 `settings.json`。
+
+核心示例：
+
+- provider 定义 `anthropic` 的 `baseUrl`、`apiKey`、`apiMode`
+- model 使用 `owned_by: "anthropic"`
+- `apiMode` 必须为 `anthropic`
+
+## 启动方式
+
+### 开发运行
+
+在仓库根目录执行：
+
+`dotnet run --project OllamaHub`
+
+监听地址现在建议直接在 `settings.json` 中配置。
+
+示例 1：使用 `host` + `port`
+
+`"host": "127.0.0.1", "port": 11434`
+
+示例 2：使用单个 `url`
+
+`"url": "http://127.0.0.1:11434"`
+
+当前优先推荐为 VS Copilot BYOM 配置：
+
+`"url": "http://127.0.0.1:11434"`
+
+如果你仍然需要，也可以继续使用 ASP.NET Core 自带环境变量覆盖，例如：
+
+`set ASPNETCORE_URLS=http://127.0.0.1:11434`
+
+然后再启动程序。
+
+### 发布运行
+
+示例：
+
+`dotnet publish OllamaHub -c Release -o publish`
+
+把 `settings.json` 放到 `publish` 目录，与生成的可执行文件同级。
+
+## 在 Visual Studio Copilot Chat BYOM 中使用
+
+思路是把 OllamaHub 当作本地 Ollama 服务。
+
+建议步骤：
+
+1. 启动 OllamaHub，并监听一个本地 HTTP 地址，例如 `http://127.0.0.1:11434`
+2. 在 Visual Studio 的 Copilot Chat BYOM 中选择使用 Ollama / 本地 Ollama
+3. 把地址指向 OllamaHub 的监听地址
+4. Copilot 请求到达 OllamaHub 后，由它转发到配置中的 Anthropic 模型
+
+## 请求映射说明
+
+### Ollama -> Anthropic
+
+- `system` 消息会被合并为 Anthropic 的 `system`
+- `user` / `assistant` 文本消息会映射到 Anthropic `messages`
+- `assistant.tool_calls` 会映射为 Anthropic `tool_use`
+- `tool` 角色消息会映射为 Anthropic `tool_result`
+- `options.temperature` -> `temperature`
+- `options.top_p` -> `top_p`
+- `options.num_predict` -> `max_tokens`
+- `extra` 会直接合并到 Anthropic 请求体
+
+### Anthropic -> Ollama
+
+- 非流式：把返回文本块合并为一个 Ollama chat 响应
+- 流式：把 Anthropic SSE 事件转换为 Ollama 风格 NDJSON 分块输出
+
+## 当前限制
+
+当前版本只覆盖首批可用场景，存在以下限制：
+
+- 仅支持 `apiMode = anthropic`
+- 当前支持文本消息和基础工具调用透传
+- 尚未实现图像/多模态消息透传
+- 仅实现了 Copilot Chat BYOM 所需的基础 Ollama 兼容面
+- 模型元数据中的大小、量化等字段为代理占位值，不代表真实模型信息
+
+## 测试
+
+运行全部测试：
+
+`dotnet test`
+
+当前已覆盖：
+
+- 配置加载与模型解析
+- settings 中监听地址解析
+- Ollama 请求到 Anthropic 请求的转换
+- Ollama 工具调用到 Anthropic tool_use/tool_result 的转换
+- Anthropic SSE 到 Ollama NDJSON 的映射
+
+## 后续扩展方向
+
+- OpenAI 兼容接口转发
+- Gemini 转发
+- 工具调用透传
+- 多模态内容转发
+- 更完整的 Ollama API 兼容

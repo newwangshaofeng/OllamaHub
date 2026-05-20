@@ -1,0 +1,49 @@
+{
+  "host": "127.0.0.1",
+  "port": 11434,
+  "providers": [
+    {
+      "id": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "apiKey": "your-anthropic-api-key",
+      "apiMode": "anthropic",
+      "headers": {
+        "anthropic-beta": "tools-2024-04-04"
+      }
+    }
+  ],
+  "models": [
+    {
+      "id": "claude-sonnet-4-5",
+      "owned_by": "anthropic",
+      "displayName": "Claude Sonnet 4.5",
+      "family": "claude",
+      "apiMode": "anthropic",
+      "context_length": 200000,
+      "max_tokens": 8192,
+      "temperature": 0,
+      "top_p": 1,
+      "extra": {
+        "service_tier": "standard_only"
+      }
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "configId": "thinking",
+      "owned_by": "anthropic",
+      "displayName": "Claude Sonnet 4.5 Thinking",
+      "family": "claude",
+      "apiMode": "anthropic",
+      "context_length": 200000,
+      "max_tokens": 8192,
+      "temperature": 1,
+      "top_p": 1,
+      "extra": {
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 4096
+        }
+      }
+    }
+  ]
+}
