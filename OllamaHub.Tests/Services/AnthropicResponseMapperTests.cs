@@ -16,7 +16,7 @@ public sealed class AnthropicResponseMapperTests
         OllamaModelName = "claude-sonnet-4-5",
         DisplayName = "Claude Sonnet",
         ProviderId = "anthropic",
-        ApiMode = "anthropic",
+        ApiModes = ["anthropic"],
         BaseUrl = "https://api.anthropic.com",
         ApiKey = "secret",
         AnthropicModel = "claude-sonnet-4-5"

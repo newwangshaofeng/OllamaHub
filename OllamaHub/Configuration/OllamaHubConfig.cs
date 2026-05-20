@@ -103,7 +103,7 @@ public sealed class ResolvedModelConfig
 
     public required string ProviderId { get; init; }
 
-    public required string ApiMode { get; init; }
+    public IReadOnlyList<string> ApiModes { get; init; } = [];
 
     public required string BaseUrl { get; init; }
 
@@ -124,6 +124,9 @@ public sealed class ResolvedModelConfig
     public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
     public IReadOnlyDictionary<string, JsonNode?> Extra { get; init; } = new Dictionary<string, JsonNode?>(StringComparer.OrdinalIgnoreCase);
+
+    public bool SupportsApiMode(string apiMode) =>
+        ApiModes.Any(mode => string.Equals(mode, apiMode, StringComparison.OrdinalIgnoreCase));
 }
 
 public sealed class ResolvedServerConfig

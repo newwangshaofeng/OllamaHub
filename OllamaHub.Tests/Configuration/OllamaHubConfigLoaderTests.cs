@@ -53,14 +53,19 @@ public sealed class OllamaHubConfigLoaderTests
 
             var models = OllamaHubConfigLoader.LoadModels(configPath, NullLogger.Instance);
 
-            var model = Assert.Single(models);
+            Assert.Equal(2, models.Count);
+            var model = Assert.Single(models, candidate => candidate.ModelId == "claude-sonnet-4-5");
             Assert.Equal("claude-sonnet-4-5::fast", model.OllamaModelName);
             Assert.Equal("claude-sonnet-4-5", model.AnthropicModel);
+            Assert.Equal(["anthropic"], model.ApiModes);
             Assert.Equal("https://api.anthropic.com", model.BaseUrl);
             Assert.Equal("test-key", model.ApiKey);
             Assert.Equal("tools-2024-04-04", model.Headers["anthropic-beta"]);
             Assert.Equal("1", model.Headers["x-test"]);
             Assert.Equal("standard_only", model.Extra["service_tier"]?.GetValue<string>());
+
+            var openAiModel = Assert.Single(models, candidate => candidate.ModelId == "ignored-openai");
+            Assert.Equal(["openai"], openAiModel.ApiModes);
         }
         finally
         {
@@ -105,7 +110,7 @@ public sealed class OllamaHubConfigLoaderTests
                 OllamaModelName = "claude-sonnet-4-5",
                 DisplayName = "Claude Sonnet 4.5",
                 ProviderId = "anthropic",
-                ApiMode = "anthropic",
+                ApiModes = ["anthropic"],
                 BaseUrl = "https://api.anthropic.com",
                 ApiKey = "test-key",
                 AnthropicModel = "claude-sonnet-4-5"
@@ -116,7 +121,7 @@ public sealed class OllamaHubConfigLoaderTests
                 OllamaModelName = "claude-sonnet-4-5::thinking",
                 DisplayName = "Claude Sonnet 4.5 Thinking",
                 ProviderId = "anthropic",
-                ApiMode = "anthropic",
+                ApiModes = ["anthropic"],
                 BaseUrl = "https://api.anthropic.com",
                 ApiKey = "test-key",
                 AnthropicModel = "claude-sonnet-4-5"
@@ -127,5 +132,44 @@ public sealed class OllamaHubConfigLoaderTests
 
         Assert.NotNull(result);
         Assert.Equal("claude-sonnet-4-5", result.OllamaModelName);
+    }
+
+    [Fact]
+    public void LoadModels_ParsesSemicolonSeparatedApiModes()
+    {
+        var configPath = Path.GetTempFileName();
+
+        try
+        {
+            File.WriteAllText(configPath, """
+            {
+              "providers": [
+                {
+                  "id": "hybrid",
+                  "baseUrl": "https://api.example.com",
+                  "apiKey": "test-key",
+                  "apiMode": "openai; anthropic"
+                }
+              ],
+              "models": [
+                {
+                  "id": "model-a",
+                  "owned_by": "hybrid"
+                }
+              ]
+            }
+            """);
+
+            var model = Assert.Single(OllamaHubConfigLoader.LoadModels(configPath, NullLogger.Instance));
+
+            Assert.Equal(["openai", "anthropic"], model.ApiModes);
+            Assert.True(model.SupportsApiMode("openai"));
+            Assert.True(model.SupportsApiMode("anthropic"));
+            Assert.False(model.SupportsApiMode("ollama"));
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
     }
 }

@@ -14,6 +14,17 @@ public interface IAnthropicRequestFactory
 
 public sealed class AnthropicRequestFactory : IAnthropicRequestFactory
 {
+    private static readonly HashSet<string> SupportedAnthropicExtraFields = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "metadata",
+        "service_tier",
+        "stop_sequences",
+        "thinking",
+        "mcp_servers",
+        "container",
+        "context_management"
+    };
+
     public AnthropicMessagesRequest Create(ResolvedModelConfig model, OllamaChatRequest request)
     {
         var extra = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
@@ -49,7 +60,10 @@ public sealed class AnthropicRequestFactory : IAnthropicRequestFactory
 
         foreach (var pair in request.Extra)
         {
-            extra[pair.Key] = ConvertToExtensionValue(pair.Value);
+            if (SupportedAnthropicExtraFields.Contains(pair.Key))
+            {
+                extra[pair.Key] = ConvertToExtensionValue(pair.Value);
+            }
         }
 
         var messages = request.Messages.SelectMany(message => ConvertOpenAiMessage(message, systemMessages)).ToList();
@@ -69,9 +83,54 @@ public sealed class AnthropicRequestFactory : IAnthropicRequestFactory
                 Description = tool.Function.Description,
                 InputSchema = tool.Function.Parameters
             }).ToArray(),
-            ToolChoice = request.ToolChoice,
+            ToolChoice = MapToolChoice(request.ToolChoice),
             Extra = extra
         };
+    }
+
+    private static JsonNode? MapToolChoice(JsonNode? toolChoice)
+    {
+        if (toolChoice is null)
+        {
+            return null;
+        }
+
+        if (toolChoice is JsonValue value && value.TryGetValue<string>(out var stringValue))
+        {
+            return stringValue.ToLowerInvariant() switch
+            {
+                "auto" => JsonNode.Parse("""{"type":"auto"}"""),
+                "required" => JsonNode.Parse("""{"type":"any"}"""),
+                "none" => null,
+                _ => null
+            };
+        }
+
+        if (toolChoice is JsonObject obj)
+        {
+            var type = obj["type"]?.GetValue<string>();
+            if (string.Equals(type, "function", StringComparison.OrdinalIgnoreCase))
+            {
+                var functionName = obj["function"]?["name"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(functionName))
+                {
+                    return new JsonObject
+                    {
+                        ["type"] = "tool",
+                        ["name"] = functionName
+                    };
+                }
+            }
+
+            if (string.Equals(type, "auto", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(type, "any", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(type, "tool", StringComparison.OrdinalIgnoreCase))
+            {
+                return obj.DeepClone();
+            }
+        }
+
+        return null;
     }
 
     private static object? ConvertToExtensionValue(object? value)

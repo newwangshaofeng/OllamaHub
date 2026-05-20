@@ -77,6 +77,9 @@ public sealed class OllamaShowResponse
     [JsonPropertyName("details")]
     public required OllamaModelDetails Details { get; init; }
 
+    [JsonPropertyName("capabilities")]
+    public IReadOnlyList<string> Capabilities { get; init; } = [];
+
     [JsonPropertyName("model_info")]
     public required IReadOnlyDictionary<string, object> ModelInfo { get; init; }
 }

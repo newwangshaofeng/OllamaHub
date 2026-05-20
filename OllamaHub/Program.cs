@@ -26,6 +26,7 @@ builder.Services.AddSingleton<IOllamaHubConfigProvider, OllamaHubConfigLoader>()
 builder.Services.AddSingleton<IAnthropicRequestFactory, AnthropicRequestFactory>();
 builder.Services.AddSingleton<IAnthropicResponseMapper, AnthropicResponseMapper>();
 builder.Services.AddHttpClient<IAnthropicProxyClient, AnthropicProxyClient>();
+builder.Services.AddHttpClient<IProtocolPassthroughClient, ProtocolPassthroughClient>();
 
 var app = builder.Build();
 
@@ -64,13 +65,16 @@ app.MapPost("/api/show", (IOllamaHubConfigProvider configProvider, OllamaShowReq
         Modelfile = $"FROM {model.AnthropicModel}",
         Parameters = $"family={model.Family}\ncontext_length={model.ContextLength}\nmax_tokens={model.MaxTokens}",
         Details = ToDescriptor(model).Details,
+        Capabilities = ["completion", "tools"],
         ModelInfo = new Dictionary<string, object>
         {
             ["provider"] = model.ProviderId,
             ["anthropic_model"] = model.AnthropicModel,
             ["context_length"] = model.ContextLength,
             ["max_tokens"] = model.MaxTokens,
-            ["display_name"] = model.DisplayName
+            ["display_name"] = model.DisplayName,
+            ["capabilities"] = new[] { "completion", "tools" },
+            ["supports_tools"] = true
         }
     });
 });
@@ -81,6 +85,7 @@ app.MapPost("/api/chat", async (
     IAnthropicRequestFactory requestFactory,
     IAnthropicProxyClient proxyClient,
     IAnthropicResponseMapper responseMapper,
+    IProtocolPassthroughClient passthroughClient,
     OllamaChatRequest request,
     CancellationToken cancellationToken) =>
 {
@@ -91,6 +96,12 @@ app.MapPost("/api/chat", async (
         {
             Error = $"Model '{request.Model}' is not configured."
         });
+    }
+
+    if (model.SupportsApiMode("ollama"))
+    {
+        await passthroughClient.ProxyAsync(httpContext, model, "ollama", "/api/chat", request, cancellationToken);
+        return Results.Empty;
     }
 
     var anthropicRequest = requestFactory.Create(model, request);
@@ -126,6 +137,7 @@ app.MapPost("/v1/chat/completions", async (
     IAnthropicRequestFactory requestFactory,
     IAnthropicProxyClient proxyClient,
     IAnthropicResponseMapper responseMapper,
+    IProtocolPassthroughClient passthroughClient,
     ILogger<Program> logger,
     OpenAIChatCompletionsRequest request,
     CancellationToken cancellationToken) =>
@@ -142,6 +154,12 @@ app.MapPost("/v1/chat/completions", async (
         {
             Error = $"Model '{request.Model}' is not configured."
         });
+    }
+
+    if (model.SupportsApiMode("openai"))
+    {
+        await passthroughClient.ProxyAsync(httpContext, model, "openai", "/v1/chat/completions", request, cancellationToken);
+        return Results.Empty;
     }
 
     var anthropicRequest = requestFactory.Create(model, request);

@@ -119,8 +119,10 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
             var providerId = GetProviderId(model);
             providers.TryGetValue(providerId, out var provider);
 
-            var apiMode = model.ApiMode ?? provider?.ApiMode ?? "openai";
-            if (!string.Equals(apiMode, "anthropic", StringComparison.OrdinalIgnoreCase))
+            var apiModes = ResolveApiModes(model.ApiMode, provider?.ApiMode);
+            if (!apiModes.Contains("anthropic", StringComparer.OrdinalIgnoreCase)
+                && !apiModes.Contains("openai", StringComparer.OrdinalIgnoreCase)
+                && !apiModes.Contains("ollama", StringComparer.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -152,7 +154,7 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
                 ModelId = model.Id,
                 AnthropicModel = model.Id,
                 ProviderId = providerId,
-                ApiMode = "anthropic",
+                ApiModes = apiModes,
                 BaseUrl = baseUrl.TrimEnd('/'),
                 ApiKey = apiKey,
                 DisplayName = model.DisplayName ?? model.Id,
@@ -167,8 +169,25 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
             });
         }
 
-        logger.LogInformation("Loaded {Count} anthropic model(s) from {ConfigPath}", models.Count, configPath);
+        logger.LogInformation("Loaded {Count} model(s) from {ConfigPath}", models.Count, configPath);
         return (server, models);
+    }
+
+    private static IReadOnlyList<string> ResolveApiModes(string? modelApiMode, string? providerApiMode)
+    {
+        var raw = string.IsNullOrWhiteSpace(modelApiMode) ? providerApiMode : modelApiMode;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return ["openai"];
+        }
+
+        var modes = raw
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(mode => !string.IsNullOrWhiteSpace(mode))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return modes.Length > 0 ? modes : ["openai"];
     }
 
     public static string BuildDigest(ResolvedModelConfig model)

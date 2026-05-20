@@ -19,7 +19,7 @@ public sealed class AnthropicRequestFactoryTests
             OllamaModelName = "claude-sonnet-4-5",
             DisplayName = "Claude Sonnet",
             ProviderId = "anthropic",
-            ApiMode = "anthropic",
+            ApiModes = ["anthropic"],
             BaseUrl = "https://api.anthropic.com",
             ApiKey = "secret",
             AnthropicModel = "claude-sonnet-4-5",
@@ -71,7 +71,7 @@ public sealed class AnthropicRequestFactoryTests
             OllamaModelName = "claude-sonnet-4-5",
             DisplayName = "Claude Sonnet",
             ProviderId = "anthropic",
-            ApiMode = "anthropic",
+            ApiModes = ["anthropic"],
             BaseUrl = "https://api.anthropic.com",
             ApiKey = "secret",
             AnthropicModel = "claude-sonnet-4-5"
@@ -137,7 +137,7 @@ public sealed class AnthropicRequestFactoryTests
             OllamaModelName = "claude-sonnet-4-5",
             DisplayName = "Claude Sonnet",
             ProviderId = "anthropic",
-            ApiMode = "anthropic",
+            ApiModes = ["anthropic"],
             BaseUrl = "https://api.anthropic.com",
             ApiKey = "secret",
             AnthropicModel = "claude-sonnet-4-5",
@@ -210,7 +210,7 @@ public sealed class AnthropicRequestFactoryTests
         Assert.Equal(0.4, result.Temperature);
         Assert.Equal(0.8, result.TopP);
         Assert.Equal(2048, result.MaxTokens);
-        Assert.Equal("auto", result.ToolChoice?.GetValue<string>());
+        Assert.Equal("auto", result.ToolChoice?["type"]?.GetValue<string>());
         Assert.Single(result.Tools!);
         Assert.Equal("read_file", result.Tools[0].Name);
         Assert.Equal("Read a file", result.Tools[0].Description);
@@ -219,6 +219,69 @@ public sealed class AnthropicRequestFactoryTests
         Assert.Equal(3, result.Messages.Count);
         Assert.Equal("tool_use", result.Messages[1].Content[1].Type);
         Assert.Equal("tool_result", result.Messages[2].Content[0].Type);
+    }
+
+    [Fact]
+    public void Create_OpenAiRequest_MapsRequiredToolChoiceToAnthropicAny()
+    {
+        var factory = new AnthropicRequestFactory();
+        var model = new ResolvedModelConfig
+        {
+            ModelId = "claude-sonnet-4-5",
+            OllamaModelName = "claude-sonnet-4-5",
+            DisplayName = "Claude Sonnet",
+            ProviderId = "anthropic",
+            ApiModes = ["anthropic"],
+            BaseUrl = "https://api.anthropic.com",
+            ApiKey = "secret",
+            AnthropicModel = "claude-sonnet-4-5"
+        };
+
+        var request = new OpenAIChatCompletionsRequest
+        {
+            Model = "claude-sonnet-4-5",
+            ToolChoice = JsonValue.Create("required"),
+            Messages =
+            [
+                new OpenAIChatMessage { Role = "user", Content = JsonValue.Create("hello") }
+            ]
+        };
+
+        var result = factory.Create(model, request);
+
+        Assert.Equal("any", result.ToolChoice?["type"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public void Create_OpenAiRequest_MapsFunctionToolChoiceToAnthropicTool()
+    {
+        var factory = new AnthropicRequestFactory();
+        var model = new ResolvedModelConfig
+        {
+            ModelId = "claude-sonnet-4-5",
+            OllamaModelName = "claude-sonnet-4-5",
+            DisplayName = "Claude Sonnet",
+            ProviderId = "anthropic",
+            ApiModes = ["anthropic"],
+            BaseUrl = "https://api.anthropic.com",
+            ApiKey = "secret",
+            AnthropicModel = "claude-sonnet-4-5"
+        };
+
+        var request = new OpenAIChatCompletionsRequest
+        {
+            Model = "claude-sonnet-4-5",
+            ToolChoice = JsonNode.Parse("""{"type":"function","function":{"name":"read_file"}}"""),
+            Messages =
+            [
+                new OpenAIChatMessage { Role = "user", Content = JsonValue.Create("hello") }
+            ]
+        };
+
+        var result = factory.Create(model, request);
+
+        Assert.Equal("tool", result.ToolChoice?["type"]?.GetValue<string>());
+        Assert.Equal("read_file", result.ToolChoice?["name"]?.GetValue<string>());
     }
 
     [Fact]
@@ -231,7 +294,7 @@ public sealed class AnthropicRequestFactoryTests
             OllamaModelName = "claude-sonnet-4-5",
             DisplayName = "Claude Sonnet",
             ProviderId = "anthropic",
-            ApiMode = "anthropic",
+            ApiModes = ["anthropic"],
             BaseUrl = "https://api.anthropic.com",
             ApiKey = "secret",
             AnthropicModel = "claude-sonnet-4-5"
