@@ -1,9 +1,13 @@
 ﻿using System.Net;
 using OllamaHub.Configuration;
 using OllamaHub.Contracts;
+using OllamaHub.Logging;
 using OllamaHub.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+var logPath = Path.Combine(AppContext.BaseDirectory, "OllamaHub.log");
+
+builder.Logging.AddProvider(new FileLoggerProvider(logPath));
 
 var startupLogger = LoggerFactory.Create(logging => logging.AddSimpleConsole()).CreateLogger("Startup");
 var serverConfig = OllamaHubConfigLoader.LoadServer(Path.Combine(AppContext.BaseDirectory, OllamaHubConfigLoader.DefaultConfigFileName), startupLogger);
@@ -114,6 +118,19 @@ app.MapPost("/api/chat", async (
     await using var anthropicStream = streamResult.Stream;
     await responseMapper.WriteStreamAsync(model, anthropicStream, httpContext.Response.Body, cancellationToken);
     return Results.Empty;
+});
+
+app.MapFallback((HttpContext httpContext, ILogger<Program> logger) =>
+{
+    if (HttpMethods.IsPost(httpContext.Request.Method))
+    {
+        logger.LogError("Unrecognized POST route: {Path}", httpContext.Request.Path.Value);
+    }
+
+    return Results.NotFound(new OllamaErrorResponse
+    {
+        Error = $"Route '{httpContext.Request.Path.Value}' is not recognized."
+    });
 });
 
 app.Lifetime.ApplicationStarted.Register(() =>
