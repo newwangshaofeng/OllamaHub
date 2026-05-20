@@ -103,7 +103,7 @@ app.MapPost("/api/chat", async (
             return ToError(statusCode, error);
         }
 
-        return Results.Ok(response);
+        return Results.Ok(responseMapper.MapMessageResponse(model, response));
     }
 
     var streamResult = await proxyClient.SendStreamAsync(model, anthropicRequest, cancellationToken);
@@ -117,6 +117,52 @@ app.MapPost("/api/chat", async (
 
     await using var anthropicStream = streamResult.Stream;
     await responseMapper.WriteStreamAsync(model, anthropicStream, httpContext.Response.Body, cancellationToken);
+    return Results.Empty;
+});
+
+app.MapPost("/v1/chat/completions", async (
+    HttpContext httpContext,
+    IOllamaHubConfigProvider configProvider,
+    IAnthropicRequestFactory requestFactory,
+    IAnthropicProxyClient proxyClient,
+    IAnthropicResponseMapper responseMapper,
+    OpenAIChatCompletionsRequest request,
+    CancellationToken cancellationToken) =>
+{
+    var model = configProvider.FindModel(request.Model);
+    if (model is null)
+    {
+        return Results.NotFound(new OllamaErrorResponse
+        {
+            Error = $"Model '{request.Model}' is not configured."
+        });
+    }
+
+    var anthropicRequest = requestFactory.Create(model, request);
+
+    if (!request.Stream)
+    {
+        var (statusCode, response, error) = await proxyClient.SendAsync(model, anthropicRequest, cancellationToken);
+        if (response is null)
+        {
+            return ToError(statusCode, error);
+        }
+
+        return Results.Ok(responseMapper.MapOpenAiResponse(model, response));
+    }
+
+    var streamResult = await proxyClient.SendStreamAsync(model, anthropicRequest, cancellationToken);
+    if (streamResult.Stream is null)
+    {
+        return ToError(streamResult.StatusCode, streamResult.Error);
+    }
+
+    httpContext.Response.StatusCode = StatusCodes.Status200OK;
+    httpContext.Response.ContentType = "text/event-stream";
+    httpContext.Response.Headers.CacheControl = "no-cache";
+
+    await using var anthropicStream = streamResult.Stream;
+    await responseMapper.WriteOpenAiStreamAsync(model, anthropicStream, httpContext.Response.Body, cancellationToken);
     return Results.Empty;
 });
 

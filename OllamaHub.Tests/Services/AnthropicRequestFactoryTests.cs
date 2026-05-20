@@ -125,4 +125,98 @@ public sealed class AnthropicRequestFactoryTests
         Assert.Equal("call_1", result.Messages[1].Content[0].ToolUseId);
         Assert.Equal("# README", result.Messages[1].Content[0].Content);
     }
+
+    [Fact]
+    public void Create_OpenAiRequest_MapsMessagesToolsAndExtra()
+    {
+        var factory = new AnthropicRequestFactory();
+        var model = new ResolvedModelConfig
+        {
+            ModelId = "claude-sonnet-4-5",
+            OllamaModelName = "claude-sonnet-4-5",
+            DisplayName = "Claude Sonnet",
+            ProviderId = "anthropic",
+            ApiMode = "anthropic",
+            BaseUrl = "https://api.anthropic.com",
+            ApiKey = "secret",
+            AnthropicModel = "claude-sonnet-4-5",
+            MaxTokens = 4096,
+            Extra = new Dictionary<string, JsonNode?>
+            {
+                ["service_tier"] = "standard_only"
+            }
+        };
+
+        var request = new OpenAIChatCompletionsRequest
+        {
+            Model = "claude-sonnet-4-5",
+            Stream = true,
+            Temperature = 0.4,
+            TopP = 0.8,
+            MaxTokens = 2048,
+            ToolChoice = JsonValue.Create("auto"),
+            Tools =
+            [
+                new OpenAIToolDefinition
+                {
+                    Function = new OpenAIToolFunctionDefinition
+                    {
+                        Name = "read_file",
+                        Description = "Read a file",
+                        Parameters = JsonNode.Parse("""{"type":"object"}""")
+                    }
+                }
+            ],
+            Messages =
+            [
+                new OpenAIChatMessage { Role = "system", Content = JsonValue.Create("you are helpful") },
+                new OpenAIChatMessage { Role = "user", Content = JsonValue.Create("hello") },
+                new OpenAIChatMessage
+                {
+                    Role = "assistant",
+                    Content = JsonValue.Create("calling tool"),
+                    ToolCalls =
+                    [
+                        new OpenAIToolCall
+                        {
+                            Id = "call_1",
+                            Function = new OpenAIToolCallFunction
+                            {
+                                Name = "read_file",
+                                Arguments = "{\"path\":\"README.md\"}"
+                            }
+                        }
+                    ]
+                },
+                new OpenAIChatMessage
+                {
+                    Role = "tool",
+                    ToolCallId = "call_1",
+                    Name = "read_file",
+                    Content = JsonValue.Create("# README")
+                }
+            ],
+            Extra = new Dictionary<string, JsonNode?>
+            {
+                ["metadata"] = JsonNode.Parse("""{"source":"test"}""")
+            }
+        };
+
+        var result = factory.Create(model, request);
+
+        Assert.Equal("you are helpful", result.System);
+        Assert.True(result.Stream);
+        Assert.Equal(0.4, result.Temperature);
+        Assert.Equal(0.8, result.TopP);
+        Assert.Equal(2048, result.MaxTokens);
+        Assert.Equal("auto", result.ToolChoice?.GetValue<string>());
+        Assert.Single(result.Tools!);
+        Assert.Equal("read_file", result.Tools[0].Name);
+        Assert.Equal("Read a file", result.Tools[0].Description);
+        Assert.Equal("standard_only", result.Extra["service_tier"]?.GetValue<string>());
+        Assert.Equal("test", result.Extra["metadata"]?["source"]?.GetValue<string>());
+        Assert.Equal(3, result.Messages.Count);
+        Assert.Equal("tool_use", result.Messages[1].Content[1].Type);
+        Assert.Equal("tool_result", result.Messages[2].Content[0].Type);
+    }
 }

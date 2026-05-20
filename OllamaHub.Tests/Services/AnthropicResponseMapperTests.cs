@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using OllamaHub.Configuration;
 using OllamaHub.Contracts;
 using OllamaHub.Services;
@@ -88,5 +89,137 @@ public sealed class AnthropicResponseMapperTests
         Assert.False(second?.Done);
         Assert.True(last?.Done);
         Assert.Equal("end_turn", last?.DoneReason);
+    }
+
+    [Fact]
+    public void MapOpenAiResponse_MapsTextAndToolCalls()
+    {
+        var mapper = new AnthropicResponseMapper();
+        var response = new AnthropicMessagesResponse
+        {
+            Content =
+            [
+                new AnthropicContentBlock { Type = "text", Text = "Hello" },
+                new AnthropicContentBlock
+                {
+                    Type = "tool_use",
+                    Id = "call_1",
+                    Name = "read_file",
+                    Input = JsonNode.Parse("""{"path":"README.md"}""")
+                }
+            ],
+            StopReason = "end_turn",
+            Usage = new AnthropicUsage
+            {
+                InputTokens = 100,
+                CacheReadInputTokens = 20,
+                OutputTokens = 80
+            }
+        };
+
+        var result = mapper.MapOpenAiResponse(TestModel, response);
+
+        Assert.Equal("chat.completion", result.Object);
+        Assert.Single(result.Choices);
+        Assert.Equal("assistant", result.Choices[0].Message.Role);
+        Assert.Equal("Hello", result.Choices[0].Message.Content?.GetValue<string>());
+        Assert.Single(result.Choices[0].Message.ToolCalls!);
+        Assert.Equal("call_1", result.Choices[0].Message.ToolCalls![0].Id);
+        Assert.Equal("read_file", result.Choices[0].Message.ToolCalls![0].Function.Name);
+        Assert.Equal("{\"path\":\"README.md\"}", result.Choices[0].Message.ToolCalls![0].Function.Arguments);
+        Assert.Equal("tool_calls", result.Choices[0].FinishReason);
+        Assert.Equal(120, result.Usage?.PromptTokens);
+        Assert.Equal(80, result.Usage?.CompletionTokens);
+        Assert.Equal(200, result.Usage?.TotalTokens);
+    }
+
+    [Fact]
+    public async Task WriteOpenAiStreamAsync_MapsAnthropicSseToOpenAiSse()
+    {
+        var mapper = new AnthropicResponseMapper();
+        var sse = """
+        event: content_block_delta
+        data: {"type":"content_block_delta","delta":{"text":"Hello"}}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}
+
+        """;
+
+        await using var input = new MemoryStream(Encoding.UTF8.GetBytes(sse));
+        await using var output = new MemoryStream();
+
+        await mapper.WriteOpenAiStreamAsync(TestModel, input, output, CancellationToken.None);
+
+        output.Position = 0;
+        using var reader = new StreamReader(output, Encoding.UTF8);
+        var payloads = new List<string>();
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            if (line.StartsWith("data: ", StringComparison.Ordinal))
+            {
+                payloads.Add(line[6..]);
+            }
+        }
+
+        Assert.True(payloads.Count >= 3);
+        var roleChunk = JsonSerializer.Deserialize<OpenAIChatCompletionChunk>(payloads[0]);
+        var textChunk = JsonSerializer.Deserialize<OpenAIChatCompletionChunk>(payloads[1]);
+        var finishChunk = JsonSerializer.Deserialize<OpenAIChatCompletionChunk>(payloads[2]);
+
+        Assert.Equal("assistant", roleChunk?.Choices[0].Delta.Role);
+        Assert.Equal("Hello", textChunk?.Choices[0].Delta.Content);
+        Assert.Equal("stop", finishChunk?.Choices[0].FinishReason);
+        Assert.Equal("[DONE]", payloads[^1]);
+    }
+
+    [Fact]
+    public async Task WriteOpenAiStreamAsync_MapsToolCallStartAndArgumentDeltas()
+    {
+        var mapper = new AnthropicResponseMapper();
+        var sse = """
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"read_file"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\"README.md\"}"}}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}
+
+        """;
+
+        await using var input = new MemoryStream(Encoding.UTF8.GetBytes(sse));
+        await using var output = new MemoryStream();
+
+        await mapper.WriteOpenAiStreamAsync(TestModel, input, output, CancellationToken.None);
+
+        output.Position = 0;
+        using var reader = new StreamReader(output, Encoding.UTF8);
+        var payloads = new List<string>();
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            if (line.StartsWith("data: ", StringComparison.Ordinal))
+            {
+                payloads.Add(line[6..]);
+            }
+        }
+
+        Assert.True(payloads.Count >= 4);
+        var startChunk = JsonSerializer.Deserialize<OpenAIChatCompletionChunk>(payloads[1]);
+        var argsChunk = JsonSerializer.Deserialize<OpenAIChatCompletionChunk>(payloads[2]);
+        var finishChunk = JsonSerializer.Deserialize<OpenAIChatCompletionChunk>(payloads[3]);
+
+        Assert.Single(startChunk!.Choices[0].Delta.ToolCalls!);
+        Assert.Equal(0, startChunk.Choices[0].Delta.ToolCalls![0].Index);
+        Assert.Equal("call_1", startChunk.Choices[0].Delta.ToolCalls![0].Id);
+        Assert.Equal("read_file", startChunk.Choices[0].Delta.ToolCalls![0].Function.Name);
+        Assert.Equal(string.Empty, startChunk.Choices[0].Delta.ToolCalls![0].Function.Arguments);
+
+        Assert.Single(argsChunk!.Choices[0].Delta.ToolCalls!);
+        Assert.Equal(0, argsChunk.Choices[0].Delta.ToolCalls![0].Index);
+        Assert.Equal("{\"path\":\"README.md\"}", argsChunk.Choices[0].Delta.ToolCalls![0].Function.Arguments);
+        Assert.Equal("tool_use", finishChunk?.Choices[0].FinishReason);
+        Assert.Equal("[DONE]", payloads[^1]);
     }
 }

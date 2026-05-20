@@ -9,7 +9,7 @@ namespace OllamaHub.Services;
 
 public interface IAnthropicProxyClient
 {
-    Task<(HttpStatusCode StatusCode, OllamaChatChunkResponse? Response, string? Error)> SendAsync(ResolvedModelConfig model, AnthropicMessagesRequest request, CancellationToken cancellationToken);
+    Task<(HttpStatusCode StatusCode, AnthropicMessagesResponse? Response, string? Error)> SendAsync(ResolvedModelConfig model, AnthropicMessagesRequest request, CancellationToken cancellationToken);
 
     Task<(HttpStatusCode StatusCode, Stream? Stream, string? Error)> SendStreamAsync(ResolvedModelConfig model, AnthropicMessagesRequest request, CancellationToken cancellationToken);
 }
@@ -18,7 +18,7 @@ public sealed class AnthropicProxyClient(HttpClient httpClient) : IAnthropicProx
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public async Task<(HttpStatusCode StatusCode, OllamaChatChunkResponse? Response, string? Error)> SendAsync(ResolvedModelConfig model, AnthropicMessagesRequest request, CancellationToken cancellationToken)
+    public async Task<(HttpStatusCode StatusCode, AnthropicMessagesResponse? Response, string? Error)> SendAsync(ResolvedModelConfig model, AnthropicMessagesRequest request, CancellationToken cancellationToken)
     {
         using var message = BuildRequestMessage(model, request);
         using var response = await httpClient.SendAsync(message, cancellationToken);
@@ -34,8 +34,7 @@ public sealed class AnthropicProxyClient(HttpClient httpClient) : IAnthropicProx
             return (HttpStatusCode.BadGateway, null, "Anthropic 返回了空响应。");
         }
 
-        var mapped = new AnthropicResponseMapper().MapMessageResponse(model, result);
-        return (response.StatusCode, mapped, null);
+        return (response.StatusCode, result, null);
     }
 
     public async Task<(HttpStatusCode StatusCode, Stream? Stream, string? Error)> SendStreamAsync(ResolvedModelConfig model, AnthropicMessagesRequest request, CancellationToken cancellationToken)

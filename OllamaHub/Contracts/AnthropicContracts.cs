@@ -29,8 +29,30 @@ public sealed class AnthropicMessagesRequest
     [JsonPropertyName("max_tokens")]
     public int MaxTokens { get; init; }
 
+    [JsonPropertyName("tools")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<AnthropicToolDefinition>? Tools { get; init; }
+
+    [JsonPropertyName("tool_choice")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonNode? ToolChoice { get; init; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonNode?> Extra { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class AnthropicToolDefinition
+{
+    [JsonPropertyName("name")]
+    public required string Name { get; init; }
+
+    [JsonPropertyName("description")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Description { get; init; }
+
+    [JsonPropertyName("input_schema")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonNode? InputSchema { get; init; }
 }
 
 public sealed class AnthropicMessage
@@ -83,6 +105,29 @@ public sealed class AnthropicMessagesResponse
 
     [JsonPropertyName("stop_reason")]
     public string? StopReason { get; init; }
+
+    [JsonPropertyName("usage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AnthropicUsage? Usage { get; init; }
+}
+
+public sealed class AnthropicUsage
+{
+    [JsonPropertyName("input_tokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? InputTokens { get; init; }
+
+    [JsonPropertyName("output_tokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? OutputTokens { get; init; }
+
+    [JsonPropertyName("cache_creation_input_tokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? CacheCreationInputTokens { get; init; }
+
+    [JsonPropertyName("cache_read_input_tokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? CacheReadInputTokens { get; init; }
 }
 
 public sealed class AnthropicErrorEnvelope
