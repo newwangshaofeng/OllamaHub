@@ -11,8 +11,6 @@ public interface IOllamaHubConfigProvider
 
     ResolvedAppConfig GetConfig();
 
-    IReadOnlyList<string> GetServerUrls();
-
     IReadOnlyList<ResolvedModelConfig> GetModels();
 
     ResolvedModelConfig? FindModel(string modelName);
@@ -30,7 +28,6 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
     };
 
     private readonly IReadOnlyList<ResolvedModelConfig> _models;
-    private readonly IReadOnlyList<string> _serverUrls;
     private readonly ResolvedAppConfig _config;
 
     public OllamaHubConfigLoader(ILogger<OllamaHubConfigLoader> logger)
@@ -38,14 +35,11 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
         ConfigPath = Path.Combine(AppContext.BaseDirectory, DefaultConfigFileName);
         _config = Load(ConfigPath, logger);
         _models = _config.Models;
-        _serverUrls = _config.Server.Urls;
     }
 
     public string ConfigPath { get; }
 
     public ResolvedAppConfig GetConfig() => _config;
-
-    public IReadOnlyList<string> GetServerUrls() => _serverUrls;
 
     public IReadOnlyList<ResolvedModelConfig> GetModels() => _models;
 

@@ -1,7 +1,9 @@
 ﻿using System.Net;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using OllamaHub.Configuration;
 using OllamaHub.Contracts;
+using OllamaHub.Interop;
 using OllamaHub.Logging;
 using OllamaHub.Services;
 
@@ -9,11 +11,36 @@ var builder = WebApplication.CreateBuilder(args);
 var logPath = Path.Combine(AppContext.BaseDirectory, "OllamaHub.log");
 var configPath = Path.Combine(AppContext.BaseDirectory, OllamaHubConfigLoader.DefaultConfigFileName);
 
-var startupLogger = LoggerFactory.Create(logging => logging.AddSimpleConsole()).CreateLogger("Startup");
-var appConfig = OllamaHubConfigLoader.LoadConfig(configPath, startupLogger);
+var appConfig = OllamaHubConfigLoader.LoadConfig(configPath, NullLogger.Instance);
 var minLogLevel = appConfig.Logging.GetLogLevel();
+var enableConsoleLogging = WindowsConsoleManager.ShouldEnableConsole(minLogLevel);
 
+if (enableConsoleLogging)
+{
+    WindowsConsoleManager.EnsureConsole();
+}
+
+using var startupLoggerFactory = LoggerFactory.Create(logging =>
+{
+    logging.ClearProviders();
+    logging.AddProvider(new FileLoggerProvider(logPath, minLogLevel));
+
+    if (enableConsoleLogging)
+    {
+        logging.AddSimpleConsole();
+    }
+});
+
+var startupLogger = startupLoggerFactory.CreateLogger("Startup");
+startupLogger.LogInformation("Loaded configuration from {ConfigPath}", configPath);
+
+builder.Logging.ClearProviders();
 builder.Logging.AddProvider(new FileLoggerProvider(logPath, minLogLevel));
+
+if (enableConsoleLogging)
+{
+    builder.Logging.AddSimpleConsole();
+}
 
 if (appConfig.Server.Urls.Count > 0)
 {
@@ -209,7 +236,7 @@ app.MapFallback((HttpContext httpContext, ILogger<Program> logger) =>
 app.Lifetime.ApplicationStarted.Register(() =>
 {
     var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
-    var configuredUrls = app.Services.GetRequiredService<IOllamaHubConfigProvider>().GetServerUrls();
+    var configuredUrls = app.Services.GetRequiredService<IOllamaHubConfigProvider>().GetConfig().Server.Urls;
 
     if (configuredUrls.Count > 0)
     {

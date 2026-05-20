@@ -75,6 +75,35 @@ public sealed class OllamaHubConfigLoaderTests
     }
 
     [Fact]
+    public void LoadConfig_ResolvesServerAndLoggingFromSingleSource()
+    {
+        var configPath = Path.GetTempFileName();
+
+        try
+        {
+            File.WriteAllText(configPath, """
+            {
+              "host": "127.0.0.1",
+              "port": 11434,
+              "logging": {
+                "level": "Warning"
+              },
+              "models": []
+            }
+            """);
+
+            var config = OllamaHubConfigLoader.LoadConfig(configPath, NullLogger.Instance);
+
+            Assert.Equal("http://127.0.0.1:11434", Assert.Single(config.Server.Urls));
+            Assert.Equal(LogLevel.Warning, config.Logging.GetLogLevel());
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
+    }
+
+    [Fact]
     public void LoadServer_ResolvesHostAndPortToUrl()
     {
         var configPath = Path.GetTempFileName();
