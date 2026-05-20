@@ -222,4 +222,44 @@ public sealed class AnthropicResponseMapperTests
         Assert.Equal("tool_use", finishChunk?.Choices[0].FinishReason);
         Assert.Equal("[DONE]", payloads[^1]);
     }
+
+    [Fact]
+    public async Task WriteOpenAiStreamAsync_EmitsFinalUsageChunk()
+    {
+        var mapper = new AnthropicResponseMapper();
+        var sse = """
+        event: message_start
+        data: {"type":"message_start","message":{"usage":{"input_tokens":100,"cache_read_input_tokens":20}}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","delta":{"text":"Hello"}}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":80}}
+
+        """;
+
+        await using var input = new MemoryStream(Encoding.UTF8.GetBytes(sse));
+        await using var output = new MemoryStream();
+
+        await mapper.WriteOpenAiStreamAsync(TestModel, input, output, CancellationToken.None);
+
+        output.Position = 0;
+        using var reader = new StreamReader(output, Encoding.UTF8);
+        var payloads = new List<string>();
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            if (line.StartsWith("data: ", StringComparison.Ordinal))
+            {
+                payloads.Add(line[6..]);
+            }
+        }
+
+        Assert.True(payloads.Count >= 5);
+        var usageChunk = JsonSerializer.Deserialize<OpenAIChatCompletionChunk>(payloads[^2]);
+        Assert.Equal(120, usageChunk?.Usage?.PromptTokens);
+        Assert.Equal(80, usageChunk?.Usage?.CompletionTokens);
+        Assert.Equal(200, usageChunk?.Usage?.TotalTokens);
+        Assert.Equal("[DONE]", payloads[^1]);
+    }
 }

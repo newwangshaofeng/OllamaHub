@@ -35,7 +35,7 @@ public sealed class OpenAIChatCompletionsRequest
     public JsonNode? ToolChoice { get; init; }
 
     [JsonExtensionData]
-    public Dictionary<string, JsonNode?> Extra { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, object?> Extra { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class OpenAIChatMessage
@@ -161,6 +161,10 @@ public sealed class OpenAIChatCompletionChunk
 
     [JsonPropertyName("choices")]
     public required IReadOnlyList<OpenAIChatChunkChoice> Choices { get; init; }
+
+    [JsonPropertyName("usage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public OpenAIUsage? Usage { get; init; }
 }
 
 public sealed class OpenAIChatChunkChoice

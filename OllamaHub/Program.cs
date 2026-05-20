@@ -126,12 +126,18 @@ app.MapPost("/v1/chat/completions", async (
     IAnthropicRequestFactory requestFactory,
     IAnthropicProxyClient proxyClient,
     IAnthropicResponseMapper responseMapper,
+    ILogger<Program> logger,
     OpenAIChatCompletionsRequest request,
     CancellationToken cancellationToken) =>
 {
     var model = configProvider.FindModel(request.Model);
     if (model is null)
     {
+        logger.LogWarning(
+            "OpenAI chat completion model not configured. Requested model: {RequestedModel}. Available models: {AvailableModels}",
+            request.Model,
+            string.Join(", ", configProvider.GetModels().Select(m => m.OllamaModelName)));
+
         return Results.NotFound(new OllamaErrorResponse
         {
             Error = $"Model '{request.Model}' is not configured."

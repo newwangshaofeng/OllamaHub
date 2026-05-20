@@ -44,12 +44,50 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
 
     public IReadOnlyList<ResolvedModelConfig> GetModels() => _models;
 
-    public ResolvedModelConfig? FindModel(string modelName) =>
-        _models.FirstOrDefault(model => string.Equals(model.OllamaModelName, modelName, StringComparison.OrdinalIgnoreCase));
+    public ResolvedModelConfig? FindModel(string modelName) => FindModel(_models, modelName);
 
     internal static IReadOnlyList<ResolvedModelConfig> LoadModels(string configPath, ILogger logger) => Load(configPath, logger).Models;
 
     internal static ResolvedServerConfig LoadServer(string configPath, ILogger logger) => Load(configPath, logger).Server;
+
+    internal static ResolvedModelConfig? FindModel(IReadOnlyList<ResolvedModelConfig> models, string? modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName))
+        {
+            return null;
+        }
+
+        var normalizedModelName = modelName.Trim();
+        var candidateNames = GetCandidateModelNames(normalizedModelName);
+        var exactOllamaMatch = models.FirstOrDefault(model =>
+            candidateNames.Any(candidate => string.Equals(model.OllamaModelName, candidate, StringComparison.OrdinalIgnoreCase)));
+
+        if (exactOllamaMatch is not null)
+        {
+            return exactOllamaMatch;
+        }
+
+        return models
+            .Where(model =>
+                candidateNames.Any(candidate =>
+                    string.Equals(model.ModelId, candidate, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(model.AnthropicModel, candidate, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(model.DisplayName, candidate, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(model => string.Equals(model.OllamaModelName, model.ModelId, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .FirstOrDefault();
+    }
+
+    private static IReadOnlyList<string> GetCandidateModelNames(string modelName)
+    {
+        var candidates = new List<string> { modelName };
+        var separatorIndex = modelName.IndexOf('/');
+        if (separatorIndex > 0 && separatorIndex < modelName.Length - 1)
+        {
+            candidates.Add(modelName[(separatorIndex + 1)..]);
+        }
+
+        return candidates;
+    }
 
     private static (ResolvedServerConfig Server, IReadOnlyList<ResolvedModelConfig> Models) Load(string configPath, ILogger logger)
     {

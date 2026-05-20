@@ -93,4 +93,39 @@ public sealed class OllamaHubConfigLoaderTests
             File.Delete(configPath);
         }
     }
+
+    [Fact]
+    public void FindModel_AllowsMatchingByBaseModelId()
+    {
+        var models = new[]
+        {
+            new ResolvedModelConfig
+            {
+                ModelId = "claude-sonnet-4-5",
+                OllamaModelName = "claude-sonnet-4-5",
+                DisplayName = "Claude Sonnet 4.5",
+                ProviderId = "anthropic",
+                ApiMode = "anthropic",
+                BaseUrl = "https://api.anthropic.com",
+                ApiKey = "test-key",
+                AnthropicModel = "claude-sonnet-4-5"
+            },
+            new ResolvedModelConfig
+            {
+                ModelId = "claude-sonnet-4-5",
+                OllamaModelName = "claude-sonnet-4-5::thinking",
+                DisplayName = "Claude Sonnet 4.5 Thinking",
+                ProviderId = "anthropic",
+                ApiMode = "anthropic",
+                BaseUrl = "https://api.anthropic.com",
+                ApiKey = "test-key",
+                AnthropicModel = "claude-sonnet-4-5"
+            }
+        };
+
+        var result = OllamaHubConfigLoader.FindModel(models, "claude-sonnet-4-5");
+
+        Assert.NotNull(result);
+        Assert.Equal("claude-sonnet-4-5", result.OllamaModelName);
+    }
 }

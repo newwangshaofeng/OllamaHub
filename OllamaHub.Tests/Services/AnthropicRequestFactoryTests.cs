@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using OllamaHub.Configuration;
 using OllamaHub.Contracts;
@@ -57,7 +58,7 @@ public sealed class AnthropicRequestFactoryTests
         Assert.Equal("user", result.Messages[0].Role);
         Assert.Equal("hello", result.Messages[0].Content[0].Text);
         Assert.Equal("assistant", result.Messages[1].Role);
-        Assert.Equal("standard_only", result.Extra["service_tier"]?.GetValue<string>());
+        Assert.Equal("standard_only", Assert.IsAssignableFrom<JsonNode>(result.Extra["service_tier"])?.GetValue<string>());
     }
 
     [Fact]
@@ -196,9 +197,9 @@ public sealed class AnthropicRequestFactoryTests
                     Content = JsonValue.Create("# README")
                 }
             ],
-            Extra = new Dictionary<string, JsonNode?>
+            Extra = new Dictionary<string, object?>
             {
-                ["metadata"] = JsonNode.Parse("""{"source":"test"}""")
+                ["metadata"] = JsonDocument.Parse("""{"source":"test"}""").RootElement.Clone()
             }
         };
 
@@ -213,10 +214,57 @@ public sealed class AnthropicRequestFactoryTests
         Assert.Single(result.Tools!);
         Assert.Equal("read_file", result.Tools[0].Name);
         Assert.Equal("Read a file", result.Tools[0].Description);
-        Assert.Equal("standard_only", result.Extra["service_tier"]?.GetValue<string>());
-        Assert.Equal("test", result.Extra["metadata"]?["source"]?.GetValue<string>());
+        Assert.Equal("standard_only", Assert.IsAssignableFrom<JsonNode>(result.Extra["service_tier"])?.GetValue<string>());
+        Assert.Equal("test", Assert.IsAssignableFrom<JsonNode>(result.Extra["metadata"])?["source"]?.GetValue<string>());
         Assert.Equal(3, result.Messages.Count);
         Assert.Equal("tool_use", result.Messages[1].Content[1].Type);
         Assert.Equal("tool_result", result.Messages[2].Content[0].Type);
+    }
+
+    [Fact]
+    public void Create_OpenAiRequest_MapsMultimodalContentArray()
+    {
+        var factory = new AnthropicRequestFactory();
+        var model = new ResolvedModelConfig
+        {
+            ModelId = "claude-sonnet-4-5",
+            OllamaModelName = "claude-sonnet-4-5",
+            DisplayName = "Claude Sonnet",
+            ProviderId = "anthropic",
+            ApiMode = "anthropic",
+            BaseUrl = "https://api.anthropic.com",
+            ApiKey = "secret",
+            AnthropicModel = "claude-sonnet-4-5"
+        };
+
+        var request = new OpenAIChatCompletionsRequest
+        {
+            Model = "claude-sonnet-4-5",
+            Messages =
+            [
+                new OpenAIChatMessage
+                {
+                    Role = "user",
+                    Content = JsonNode.Parse("""
+                    [
+                      {"type":"text","text":"describe image"},
+                      {"type":"image_url","image_url":{"url":"data:image/png;base64,QUJDRA=="}}
+                    ]
+                    """)
+                }
+            ]
+        };
+
+        var result = factory.Create(model, request);
+
+        var message = Assert.Single(result.Messages);
+        Assert.Equal("user", message.Role);
+        Assert.Equal(2, message.Content.Count);
+        Assert.Equal("text", message.Content[0].Type);
+        Assert.Equal("describe image", message.Content[0].Text);
+        Assert.Equal("image", message.Content[1].Type);
+        Assert.Equal("base64", message.Content[1].Source?.Type);
+        Assert.Equal("image/png", message.Content[1].Source?.MediaType);
+        Assert.Equal("QUJDRA==", message.Content[1].Source?.Data);
     }
 }

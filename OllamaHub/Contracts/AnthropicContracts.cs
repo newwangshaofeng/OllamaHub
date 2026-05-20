@@ -38,7 +38,7 @@ public sealed class AnthropicMessagesRequest
     public JsonNode? ToolChoice { get; init; }
 
     [JsonExtensionData]
-    public Dictionary<string, JsonNode?> Extra { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, object?> Extra { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed class AnthropicToolDefinition
@@ -96,6 +96,28 @@ public sealed class AnthropicContentBlock
     [JsonPropertyName("is_error")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? IsError { get; init; }
+
+    [JsonPropertyName("source")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AnthropicContentSource? Source { get; init; }
+}
+
+public sealed class AnthropicContentSource
+{
+    [JsonPropertyName("type")]
+    public required string Type { get; init; }
+
+    [JsonPropertyName("media_type")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MediaType { get; init; }
+
+    [JsonPropertyName("data")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Data { get; init; }
+
+    [JsonPropertyName("url")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Url { get; init; }
 }
 
 public sealed class AnthropicMessagesResponse

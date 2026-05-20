@@ -123,6 +123,7 @@ public sealed class AnthropicResponseMapper : IAnthropicResponseMapper
         var completionId = CreateCompletionId();
         var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var toolIndexes = new Dictionary<int, int>();
+        var usage = new AnthropicUsage();
 
         await WriteOpenAiSseAsync(writer, new OpenAIChatCompletionChunk
         {
@@ -177,6 +178,13 @@ public sealed class AnthropicResponseMapper : IAnthropicResponseMapper
             using var document = JsonDocument.Parse(payload);
             var root = document.RootElement;
             var eventType = root.TryGetProperty("type", out var typeElement) ? typeElement.GetString() : eventName;
+
+            if (string.Equals(eventType, "message_start", StringComparison.OrdinalIgnoreCase)
+                && root.TryGetProperty("message", out var messageNode))
+            {
+                usage = MergeUsage(usage, ExtractUsage(messageNode));
+                continue;
+            }
 
             if (string.Equals(eventType, "content_block_delta", StringComparison.OrdinalIgnoreCase)
                 && root.TryGetProperty("delta", out var delta)
@@ -294,6 +302,7 @@ public sealed class AnthropicResponseMapper : IAnthropicResponseMapper
 
             if (string.Equals(eventType, "message_delta", StringComparison.OrdinalIgnoreCase))
             {
+                usage = MergeUsage(usage, ExtractUsage(root));
                 var stopReason = root.TryGetProperty("delta", out var deltaNode)
                     && deltaNode.TryGetProperty("stop_reason", out var stopReasonNode)
                     ? stopReasonNode.GetString()
@@ -315,6 +324,26 @@ public sealed class AnthropicResponseMapper : IAnthropicResponseMapper
                     ]
                 }, cancellationToken);
             }
+        }
+
+        var mappedUsage = MapUsage(usage);
+        if (mappedUsage is not null)
+        {
+            await WriteOpenAiSseAsync(writer, new OpenAIChatCompletionChunk
+            {
+                Id = completionId,
+                Created = created,
+                Model = model.OllamaModelName,
+                Choices =
+                [
+                    new OpenAIChatChunkChoice
+                    {
+                        Index = 0,
+                        Delta = new OpenAIChatDelta()
+                    }
+                ],
+                Usage = mappedUsage
+            }, cancellationToken);
         }
 
         await writer.WriteAsync("data: [DONE]\n\n");
@@ -406,6 +435,43 @@ public sealed class AnthropicResponseMapper : IAnthropicResponseMapper
             CompletionTokens = completionTokens,
             TotalTokens = promptTokens + completionTokens
         };
+    }
+
+    private static AnthropicUsage ExtractUsage(JsonElement node)
+    {
+        if (!node.TryGetProperty("usage", out var usageNode))
+        {
+            return new AnthropicUsage();
+        }
+
+        return new AnthropicUsage
+        {
+            InputTokens = ReadInt32(usageNode, "input_tokens"),
+            OutputTokens = ReadInt32(usageNode, "output_tokens"),
+            CacheCreationInputTokens = ReadInt32(usageNode, "cache_creation_input_tokens"),
+            CacheReadInputTokens = ReadInt32(usageNode, "cache_read_input_tokens")
+        };
+    }
+
+    private static AnthropicUsage MergeUsage(AnthropicUsage current, AnthropicUsage update) =>
+        new()
+        {
+            InputTokens = update.InputTokens ?? current.InputTokens,
+            OutputTokens = update.OutputTokens ?? current.OutputTokens,
+            CacheCreationInputTokens = update.CacheCreationInputTokens ?? current.CacheCreationInputTokens,
+            CacheReadInputTokens = update.CacheReadInputTokens ?? current.CacheReadInputTokens
+        };
+
+    private static int? ReadInt32(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var node))
+        {
+            return null;
+        }
+
+        return node.ValueKind == JsonValueKind.Number && node.TryGetInt32(out var value)
+            ? value
+            : null;
     }
 
     private static string CreateCompletionId() => $"chatcmpl-{Guid.NewGuid():N}";
