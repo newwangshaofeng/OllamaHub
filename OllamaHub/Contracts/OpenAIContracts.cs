@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace OllamaHub.Contracts;
 
-public sealed class OpenAIChatCompletionsRequest
+public sealed record OpenAIChatCompletionsRequest
 {
     [JsonPropertyName("model")]
     public required string Model { get; init; }

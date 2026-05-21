@@ -39,6 +39,9 @@ public sealed class ProviderConfig
     [JsonPropertyName("apiKey")]
     public string? ApiKey { get; init; }
 
+    [JsonPropertyName("protectedApiKey")]
+    public string? ProtectedApiKey { get; init; }
+
     [JsonPropertyName("apiMode")]
     public string? ApiMode { get; init; }
 
@@ -74,6 +77,9 @@ public sealed class ModelConfig
 
     [JsonPropertyName("apiKey")]
     public string? ApiKey { get; init; }
+
+    [JsonPropertyName("protectedApiKey")]
+    public string? ProtectedApiKey { get; init; }
 
     [JsonPropertyName("apiMode")]
     public string? ApiMode { get; init; }

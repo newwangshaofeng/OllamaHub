@@ -1,7 +1,9 @@
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Encodings.Web;
 
 namespace OllamaHub.Configuration;
 
@@ -16,6 +18,148 @@ public interface IOllamaHubConfigProvider
     ResolvedModelConfig? FindModel(string modelName);
 }
 
+public static class ProtectedApiKeyStore
+{
+    public const string Prefix = "dpapi:";
+
+    public static bool IsProtectedValue(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && value.StartsWith(Prefix, StringComparison.Ordinal);
+
+    public static string Protect(string plainText)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("Protected API key storage is only supported on Windows.");
+        }
+
+        var payload = Encoding.UTF8.GetBytes(plainText);
+        var protectedBytes = ProtectForCurrentUser(payload);
+        return Prefix + Convert.ToBase64String(protectedBytes);
+    }
+
+    public static string Unprotect(string value)
+    {
+        if (!IsProtectedValue(value))
+        {
+            return value;
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("Protected API key storage is only supported on Windows.");
+        }
+
+        var protectedBytes = Convert.FromBase64String(value[Prefix.Length..]);
+        var payload = UnprotectForCurrentUser(protectedBytes);
+        return Encoding.UTF8.GetString(payload);
+    }
+
+    private static byte[] ProtectForCurrentUser(byte[] payload)
+    {
+        var input = DATA_BLOB.From(payload);
+        var output = new DATA_BLOB();
+
+        try
+        {
+            if (!CryptProtectData(ref input, null, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, out output))
+            {
+                throw new CryptographicException(Marshal.GetLastWin32Error());
+            }
+
+            return output.ToArray();
+        }
+        finally
+        {
+            input.Free();
+            output.Free();
+        }
+    }
+
+    private static byte[] UnprotectForCurrentUser(byte[] payload)
+    {
+        var input = DATA_BLOB.From(payload);
+        var output = new DATA_BLOB();
+
+        try
+        {
+            if (!CryptUnprotectData(ref input, null, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, out output))
+            {
+                throw new CryptographicException(Marshal.GetLastWin32Error());
+            }
+
+            return output.ToArray();
+        }
+        finally
+        {
+            input.Free();
+            output.Free();
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DATA_BLOB
+    {
+        public int cbData;
+        public IntPtr pbData;
+
+        public static DATA_BLOB From(byte[] data)
+        {
+            var blob = new DATA_BLOB
+            {
+                cbData = data.Length,
+                pbData = Marshal.AllocHGlobal(data.Length)
+            };
+
+            Marshal.Copy(data, 0, blob.pbData, data.Length);
+            return blob;
+        }
+
+        public readonly byte[] ToArray()
+        {
+            if (cbData <= 0 || pbData == IntPtr.Zero)
+            {
+                return [];
+            }
+
+            var data = new byte[cbData];
+            Marshal.Copy(pbData, data, 0, cbData);
+            return data;
+        }
+
+        public void Free()
+        {
+            if (pbData != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(pbData);
+                pbData = IntPtr.Zero;
+                cbData = 0;
+            }
+        }
+    }
+
+    [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CryptProtectData(
+        ref DATA_BLOB pDataIn,
+        string? szDataDescr,
+        IntPtr pOptionalEntropy,
+        IntPtr pvReserved,
+        IntPtr pPromptStruct,
+        int dwFlags,
+        out DATA_BLOB pDataOut);
+
+    [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CryptUnprotectData(
+        ref DATA_BLOB pDataIn,
+        string? ppszDataDescr,
+        IntPtr pOptionalEntropy,
+        IntPtr pvReserved,
+        IntPtr pPromptStruct,
+        int dwFlags,
+        out DATA_BLOB pDataOut);
+}
+
 public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
 {
     public const string DefaultConfigFileName = "settings.json";
@@ -24,7 +168,9 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
     {
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true
+        AllowTrailingCommas = true,
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     private readonly IReadOnlyList<ResolvedModelConfig> _models;
@@ -53,6 +199,47 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
 
     internal static LoggingConfig LoadLogging(string configPath, ILogger logger) => Load(configPath, logger).Logging;
 
+    internal static OllamaHubConfig LoadRawConfig(string configPath)
+    {
+        using var stream = File.OpenRead(configPath);
+        var config = JsonSerializer.Deserialize<OllamaHubConfig>(stream, SerializerOptions);
+        return config ?? new OllamaHubConfig();
+    }
+
+    internal static void SetProtectedApiKey(string configPath, string target, string protectedApiKey)
+    {
+        var directory = Path.GetDirectoryName(configPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        JsonObject root;
+        if (File.Exists(configPath) && !string.IsNullOrWhiteSpace(File.ReadAllText(configPath)))
+        {
+            root = JsonNode.Parse(File.ReadAllText(configPath)) as JsonObject
+                ?? throw new InvalidOperationException("settings.json root must be a JSON object.");
+        }
+        else
+        {
+            throw new FileNotFoundException("Config file not found.", configPath);
+        }
+
+        if (TrySetProtectedApiKey(root["providers"] as JsonArray, "id", target, protectedApiKey))
+        {
+            File.WriteAllText(configPath, root.ToJsonString(SerializerOptions), Encoding.UTF8);
+            return;
+        }
+
+        if (TrySetProtectedApiKey(root["models"] as JsonArray, "id", target, protectedApiKey))
+        {
+            File.WriteAllText(configPath, root.ToJsonString(SerializerOptions), Encoding.UTF8);
+            return;
+        }
+
+        throw new InvalidOperationException($"No provider or model with id '{target}' was found in settings.json.");
+    }
+
     internal static ResolvedModelConfig? FindModel(IReadOnlyList<ResolvedModelConfig> models, string? modelName)
     {
         if (string.IsNullOrWhiteSpace(modelName))
@@ -61,35 +248,51 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
         }
 
         var normalizedModelName = modelName.Trim();
-        var candidateNames = GetCandidateModelNames(normalizedModelName);
         var exactOllamaMatch = models.FirstOrDefault(model =>
-            candidateNames.Any(candidate => string.Equals(model.OllamaModelName, candidate, StringComparison.OrdinalIgnoreCase)));
+            string.Equals(model.OllamaModelName, normalizedModelName, StringComparison.OrdinalIgnoreCase));
 
         if (exactOllamaMatch is not null)
         {
             return exactOllamaMatch;
         }
 
-        return models
-            .Where(model =>
-                candidateNames.Any(candidate =>
-                    string.Equals(model.ModelId, candidate, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(model.AnthropicModel, candidate, StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(model.DisplayName, candidate, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(model => string.Equals(model.OllamaModelName, model.ModelId, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
-            .FirstOrDefault();
-    }
+        var displayNameMatch = models.FirstOrDefault(model =>
+            string.Equals(model.DisplayName, normalizedModelName, StringComparison.OrdinalIgnoreCase));
 
-    private static IReadOnlyList<string> GetCandidateModelNames(string modelName)
-    {
-        var candidates = new List<string> { modelName };
-        var separatorIndex = modelName.IndexOf('/');
-        if (separatorIndex > 0 && separatorIndex < modelName.Length - 1)
+        if (displayNameMatch is not null)
         {
-            candidates.Add(modelName[(separatorIndex + 1)..]);
+            return displayNameMatch;
         }
 
-        return candidates;
+        return models.FirstOrDefault(model =>
+            string.Equals(model.ModelId, normalizedModelName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool TrySetProtectedApiKey(JsonArray? items, string idPropertyName, string target, string protectedApiKey)
+    {
+        if (items is null)
+        {
+            return false;
+        }
+
+        foreach (var node in items)
+        {
+            if (node is not JsonObject item)
+            {
+                continue;
+            }
+
+            var id = item[idPropertyName]?.GetValue<string>();
+            if (!string.Equals(id, target, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            item["protectedApiKey"] = protectedApiKey;
+            return true;
+        }
+
+        return false;
     }
 
     private static ResolvedAppConfig Load(string configPath, ILogger logger)
@@ -131,7 +334,7 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
             }
 
             var baseUrl = model.BaseUrl ?? provider?.BaseUrl ?? config.BaseUrl;
-            var apiKey = model.ApiKey ?? provider?.ApiKey;
+            var apiKey = ResolveApiKey(model.ApiKey, model.ProtectedApiKey, provider?.ApiKey, provider?.ProtectedApiKey);
             if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(apiKey))
             {
                 logger.LogWarning("Skipping model {ModelId} because baseUrl or apiKey is missing.", model.Id);
@@ -199,6 +402,27 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
         return modes.Length > 0 ? modes : ["openai"];
     }
 
+    private static string? ResolveApiKey(string? modelApiKey, string? modelProtectedApiKey, string? providerApiKey, string? providerProtectedApiKey)
+    {
+        return TryResolveConfiguredApiKey(modelApiKey, modelProtectedApiKey)
+            ?? TryResolveConfiguredApiKey(providerApiKey, providerProtectedApiKey);
+    }
+
+    private static string? TryResolveConfiguredApiKey(string? plainApiKey, string? protectedApiKey)
+    {
+        if (!string.IsNullOrWhiteSpace(protectedApiKey))
+        {
+            return ProtectedApiKeyStore.Unprotect(protectedApiKey);
+        }
+
+        if (!string.IsNullOrWhiteSpace(plainApiKey))
+        {
+            return ProtectedApiKeyStore.Unprotect(plainApiKey);
+        }
+
+        return null;
+    }
+
     public static string BuildDigest(ResolvedModelConfig model)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{model.ProviderId}:{model.ModelId}:{model.OllamaModelName}"));
@@ -212,9 +436,11 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
 
     private static string BuildOllamaModelName(ModelConfig model)
     {
+        var Name = model.DisplayName ?? model.Id;
+
         return string.IsNullOrWhiteSpace(model.ConfigId)
-            ? model.Id
-            : $"{model.Id}::{model.ConfigId}";
+            ? Name
+            : $"{Name}::{model.ConfigId}";
     }
 
     private static IReadOnlyList<string> ResolveServerUrls(OllamaHubConfig config)

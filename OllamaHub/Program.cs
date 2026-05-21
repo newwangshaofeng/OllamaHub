@@ -7,9 +7,14 @@ using OllamaHub.Interop;
 using OllamaHub.Logging;
 using OllamaHub.Services;
 
+var configPath = Path.Combine(AppContext.BaseDirectory, OllamaHubConfigLoader.DefaultConfigFileName);
+if (TryHandleCommand(args, configPath))
+{
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 var logPath = Path.Combine(AppContext.BaseDirectory, "OllamaHub.log");
-var configPath = Path.Combine(AppContext.BaseDirectory, OllamaHubConfigLoader.DefaultConfigFileName);
 
 var appConfig = OllamaHubConfigLoader.LoadConfig(configPath, NullLogger.Instance);
 var minLogLevel = appConfig.Logging.GetLogLevel();
@@ -133,7 +138,15 @@ app.MapPost("/api/chat", async (
 
     if (model.SupportsApiMode("ollama"))
     {
-        await passthroughClient.ProxyAsync(httpContext, model, "ollama", "/api/chat", request, cancellationToken);
+        var upstreamRequest = new OllamaChatRequest
+        {
+            Model = model.ModelId,
+            Messages = request.Messages,
+            Stream = request.Stream,
+            Options = request.Options
+        };
+
+        await passthroughClient.ProxyAsync(httpContext, model, "ollama", "/api/chat", upstreamRequest, cancellationToken);
         return Results.Empty;
     }
 
@@ -191,7 +204,8 @@ app.MapPost("/v1/chat/completions", async (
 
     if (model.SupportsApiMode("openai"))
     {
-        await passthroughClient.ProxyAsync(httpContext, model, "openai", "/v1/chat/completions", request, cancellationToken);
+        var upstreamRequest = request with { Model = model.ModelId };
+        await passthroughClient.ProxyAsync(httpContext, model, "openai", "/v1/chat/completions", upstreamRequest, cancellationToken);
         return Results.Empty;
     }
 
@@ -256,8 +270,8 @@ app.Run();
 static OllamaModelDescriptor ToDescriptor(ResolvedModelConfig model) =>
     new()
     {
-        Name = model.DisplayName,
-        Model = model.OllamaModelName,
+        Name = model.OllamaModelName,
+        Model = model.ModelId,
         ModifiedAt = DateTimeOffset.UtcNow.ToString("O"),
         Size = 0,
         Digest = OllamaHubConfigLoader.BuildDigest(model),
@@ -286,4 +300,65 @@ static IResult ToError(HttpStatusCode statusCode, string? error)
         StatusCodes.Status429TooManyRequests => Results.Json(payload, statusCode: StatusCodes.Status429TooManyRequests),
         _ => Results.Json(payload, statusCode: StatusCodes.Status502BadGateway)
     };
+}
+
+static bool TryHandleCommand(string[] args, string configPath)
+{
+    if (args.Length == 0)
+    {
+        return false;
+    }
+
+    if (!string.Equals(args[0], "SetApiKey", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    WindowsConsoleManager.EnsureConsole();
+
+    if (args.Length < 3)
+    {
+        Console.Error.WriteLine("Usage: OllamaHub SetApiKey <providerOrModelId> <apiKey>");
+        return true;
+    }
+
+    try
+    {
+        var target = args[1];
+        var apiKey = args[2];
+        SetProtectedApiKey(configPath, target, apiKey);
+        Console.WriteLine($"API Key for '{target}' has been stored securely.");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+    }
+
+    return true;
+}
+
+static void SetProtectedApiKey(string configPath, string target, string apiKey)
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        throw new PlatformNotSupportedException("SetApiKey is only supported on Windows.");
+    }
+
+    if (string.IsNullOrWhiteSpace(target))
+    {
+        throw new ArgumentException("Target provider or model id is required.", nameof(target));
+    }
+
+    if (string.IsNullOrWhiteSpace(apiKey))
+    {
+        throw new ArgumentException("API key is required.", nameof(apiKey));
+    }
+
+    if (!File.Exists(configPath))
+    {
+        throw new FileNotFoundException("Config file not found.", configPath);
+    }
+
+    var protectedApiKey = ProtectedApiKeyStore.Protect(apiKey);
+    OllamaHubConfigLoader.SetProtectedApiKey(configPath, target, protectedApiKey);
 }

@@ -77,6 +77,117 @@ public sealed class OllamaHubConfigLoaderTests
     }
 
     [Fact]
+    public void SetProtectedApiKey_PreservesUnknownFields()
+    {
+        var configPath = Path.GetTempFileName();
+
+        try
+        {
+            File.WriteAllText(configPath, """
+            {
+              "unknownRoot": "keep-me",
+              "providers": [
+                {
+                  "id": "provider-a",
+                  "apiKey": "plain-text",
+                  "customField": {
+                    "nested": true
+                  }
+                }
+              ],
+              "models": [],
+              "anotherUnknown": [1, 2, 3]
+            }
+            """);
+
+            OllamaHubConfigLoader.SetProtectedApiKey(configPath, "provider-a", "dpapi:test-value");
+            var updated = File.ReadAllText(configPath);
+
+            Assert.Contains("\"unknownRoot\": \"keep-me\"", updated);
+            Assert.Contains("\"customField\": {", updated);
+            Assert.Contains("\"nested\": true", updated);
+            Assert.Contains("\"anotherUnknown\": [", updated);
+            Assert.Contains("\"apiKey\": \"plain-text\"", updated);
+            Assert.Contains("\"protectedApiKey\": \"dpapi:test-value\"", updated);
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public void LoadRawConfig_ReadsProtectedApiKeyField()
+    {
+        var configPath = Path.GetTempFileName();
+
+        try
+        {
+            File.WriteAllText(configPath, """
+            {
+              "providers": [
+                {
+                  "id": "provider-a",
+                  "protectedApiKey": "dpapi:test-value"
+                }
+              ],
+              "models": []
+            }
+            """);
+
+            var config = OllamaHubConfigLoader.LoadRawConfig(configPath);
+
+            Assert.Equal("dpapi:test-value", Assert.Single(config.Providers).ProtectedApiKey);
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public void LoadModels_UsesProtectedApiKeyWhenConfigured()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var configPath = Path.GetTempFileName();
+
+        try
+        {
+            var protectedApiKey = ProtectedApiKeyStore.Protect("secret-key");
+            File.WriteAllText(configPath, $$"""
+            {
+              "providers": [
+                {
+                  "id": "provider-a",
+                  "baseUrl": "https://api.example.com",
+                  "protectedApiKey": "{{protectedApiKey}}",
+                  "apiMode": "anthropic"
+                }
+              ],
+              "models": [
+                {
+                  "id": "model-a",
+                  "owned_by": "provider-a"
+                }
+              ]
+            }
+            """);
+
+            var model = Assert.Single(OllamaHubConfigLoader.LoadModels(configPath, NullLogger.Instance));
+
+            Assert.Equal("secret-key", model.ApiKey);
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
+    }
+
+    [Fact]
     public void LoadConfig_ResolvesServerAndLoggingFromSingleSource()
     {
         var configPath = Path.GetTempFileName();
@@ -164,6 +275,41 @@ public sealed class OllamaHubConfigLoaderTests
 
         Assert.NotNull(result);
         Assert.Equal("claude-sonnet-4-5", result.OllamaModelName);
+    }
+
+    [Fact]
+    public void FindModel_PrefersDisplayNameBeforeModelId()
+    {
+        var models = new[]
+        {
+            new ResolvedModelConfig
+            {
+                ModelId = "shared-name",
+                OllamaModelName = "ollama-a",
+                DisplayName = "Display A",
+                ProviderId = "anthropic",
+                ApiModes = ["anthropic"],
+                BaseUrl = "https://api.anthropic.com",
+                ApiKey = "test-key",
+                AnthropicModel = "shared-name"
+            },
+            new ResolvedModelConfig
+            {
+                ModelId = "model-b",
+                OllamaModelName = "ollama-b",
+                DisplayName = "shared-name",
+                ProviderId = "anthropic",
+                ApiModes = ["anthropic"],
+                BaseUrl = "https://api.anthropic.com",
+                ApiKey = "test-key",
+                AnthropicModel = "model-b"
+            }
+        };
+
+        var result = OllamaHubConfigLoader.FindModel(models, "shared-name");
+
+        Assert.NotNull(result);
+        Assert.Equal("ollama-b", result.OllamaModelName);
     }
 
     [Fact]
