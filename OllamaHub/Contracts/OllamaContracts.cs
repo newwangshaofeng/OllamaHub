@@ -53,9 +53,6 @@ public sealed class OllamaModelDetails
 
 public sealed class OllamaShowRequest
 {
-    [JsonPropertyName("name")]
-    public string? Name { get; init; }
-
     [JsonPropertyName("model")]
     public string? Model { get; init; }
 }

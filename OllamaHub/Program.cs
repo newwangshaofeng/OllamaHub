@@ -61,7 +61,7 @@ builder.Services.AddHttpClient<IProtocolPassthroughClient, ProtocolPassthroughCl
 var app = builder.Build();
 
 app.MapGet("/", () => Results.Ok(new { name = "OllamaHub", status = "ok" }));
-app.MapGet("/api/version", () => Results.Ok(new { version = "0.1.0" }));
+app.MapGet("/api/version", () => Results.Ok(new { version = "0.12.6" }));
 app.MapGet("/api/ps", () => Results.Ok(new { models = Array.Empty<object>() }));
 
 app.MapGet("/api/tags", (IOllamaHubConfigProvider configProvider) =>
@@ -72,7 +72,7 @@ app.MapGet("/api/tags", (IOllamaHubConfigProvider configProvider) =>
 
 app.MapPost("/api/show", (IOllamaHubConfigProvider configProvider, OllamaShowRequest request) =>
 {
-    var modelName = request.Name ?? request.Model;
+    var modelName = request.Model;
     if (string.IsNullOrWhiteSpace(modelName))
     {
         return Results.BadRequest(new OllamaErrorResponse
@@ -102,7 +102,6 @@ app.MapPost("/api/show", (IOllamaHubConfigProvider configProvider, OllamaShowReq
             ["anthropic_model"] = model.AnthropicModel,
             ["context_length"] = model.ContextLength,
             ["max_tokens"] = model.MaxTokens,
-            ["display_name"] = model.DisplayName,
             ["capabilities"] = new[] { "completion", "tools" },
             ["supports_tools"] = true
         }
@@ -253,7 +252,7 @@ app.Run();
 static OllamaModelDescriptor ToDescriptor(ResolvedModelConfig model) =>
     new()
     {
-        Name = model.OllamaModelName,
+        Name = model.DisplayName,
         Model = model.OllamaModelName,
         ModifiedAt = DateTimeOffset.UtcNow.ToString("O"),
         Size = 0,
