@@ -84,6 +84,9 @@ public sealed class ModelConfig
     [JsonPropertyName("max_tokens")]
     public int? MaxTokens { get; init; }
 
+    [JsonPropertyName("vision")]
+    public bool Vision { get; init; }
+
     [JsonPropertyName("temperature")]
     public double? Temperature { get; init; }
 
@@ -120,6 +123,8 @@ public sealed class ResolvedModelConfig
     public int ContextLength { get; init; } = 128000;
 
     public int MaxTokens { get; init; } = 4096;
+
+    public bool Vision { get; init; }
 
     public double? Temperature { get; init; }
 

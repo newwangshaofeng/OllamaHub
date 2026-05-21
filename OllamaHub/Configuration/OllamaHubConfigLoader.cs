@@ -165,6 +165,7 @@ public sealed class OllamaHubConfigLoader : IOllamaHubConfigProvider
                 Family = model.Family ?? "claude",
                 ContextLength = model.ContextLength ?? 128000,
                 MaxTokens = model.MaxTokens ?? 4096,
+                Vision = model.Vision,
                 Temperature = model.Temperature,
                 TopP = model.TopP,
                 Headers = headers,

@@ -90,20 +90,24 @@ app.MapPost("/api/show", (IOllamaHubConfigProvider configProvider, OllamaShowReq
         });
     }
 
+    var capabilities = model.Vision
+        ? new[] { "completion", "tools", "vision" }
+        : new[] { "completion", "tools" };
+
     return Results.Ok(new OllamaShowResponse
     {
         Modelfile = $"FROM {model.AnthropicModel}",
         Parameters = $"family={model.Family}\ncontext_length={model.ContextLength}\nmax_tokens={model.MaxTokens}",
         Details = ToDescriptor(model).Details,
-        Capabilities = ["completion", "tools"],
+        Capabilities = capabilities,
         ModelInfo = new Dictionary<string, object>
         {
             ["provider"] = model.ProviderId,
             ["anthropic_model"] = model.AnthropicModel,
             ["context_length"] = model.ContextLength,
             ["max_tokens"] = model.MaxTokens,
-            ["capabilities"] = new[] { "completion", "tools" },
-            ["supports_tools"] = true
+            ["capabilities"] = capabilities,
+            ["vision"] = model.Vision,
         }
     });
 });

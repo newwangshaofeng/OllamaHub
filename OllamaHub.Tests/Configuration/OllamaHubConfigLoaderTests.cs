@@ -36,6 +36,7 @@ public sealed class OllamaHubConfigLoaderTests
                   "family": "claude",
                   "context_length": 200000,
                   "max_tokens": 8192,
+                  "vision": true,
                   "headers": {
                     "x-test": "1"
                   },
@@ -61,6 +62,7 @@ public sealed class OllamaHubConfigLoaderTests
             Assert.Equal(["anthropic"], model.ApiModes);
             Assert.Equal("https://api.anthropic.com", model.BaseUrl);
             Assert.Equal("test-key", model.ApiKey);
+            Assert.True(model.Vision);
             Assert.Equal("tools-2024-04-04", model.Headers["anthropic-beta"]);
             Assert.Equal("1", model.Headers["x-test"]);
             Assert.Equal("standard_only", model.Extra["service_tier"]?.GetValue<string>());
@@ -196,6 +198,7 @@ public sealed class OllamaHubConfigLoaderTests
             Assert.True(model.SupportsApiMode("openai"));
             Assert.True(model.SupportsApiMode("anthropic"));
             Assert.False(model.SupportsApiMode("ollama"));
+            Assert.False(model.Vision);
         }
         finally
         {
