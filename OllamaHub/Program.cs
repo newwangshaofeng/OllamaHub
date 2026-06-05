@@ -1,4 +1,5 @@
 ﻿using System.Net;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using OllamaHub.Configuration;
@@ -117,66 +118,6 @@ app.MapPost("/api/show", (IOllamaHubConfigProvider configProvider, OllamaShowReq
     });
 });
 
-app.MapPost("/api/chat", async (
-    HttpContext httpContext,
-    IOllamaHubConfigProvider configProvider,
-    IAnthropicRequestFactory requestFactory,
-    IAnthropicProxyClient proxyClient,
-    IAnthropicResponseMapper responseMapper,
-    IProtocolPassthroughClient passthroughClient,
-    OllamaChatRequest request,
-    CancellationToken cancellationToken) =>
-{
-    var model = configProvider.FindModel(request.Model);
-    if (model is null)
-    {
-        return Results.NotFound(new OllamaErrorResponse
-        {
-            Error = $"Model '{request.Model}' is not configured."
-        });
-    }
-
-    if (model.SupportsApiMode("ollama"))
-    {
-        var upstreamRequest = new OllamaChatRequest
-        {
-            Model = model.ModelId,
-            Messages = request.Messages,
-            Stream = request.Stream,
-            Options = request.Options
-        };
-
-        await passthroughClient.ProxyAsync(httpContext, model, "ollama", "/api/chat", upstreamRequest, cancellationToken);
-        return Results.Empty;
-    }
-
-    var anthropicRequest = requestFactory.Create(model, request);
-
-    if (!request.Stream)
-    {
-        var (statusCode, response, error) = await proxyClient.SendAsync(model, anthropicRequest, cancellationToken);
-        if (response is null)
-        {
-            return ToError(statusCode, error);
-        }
-
-        return Results.Ok(responseMapper.MapMessageResponse(model, response));
-    }
-
-    var streamResult = await proxyClient.SendStreamAsync(model, anthropicRequest, cancellationToken);
-    if (streamResult.Stream is null)
-    {
-        return ToError(streamResult.StatusCode, streamResult.Error);
-    }
-
-    httpContext.Response.StatusCode = StatusCodes.Status200OK;
-    httpContext.Response.ContentType = "application/x-ndjson";
-
-    await using var anthropicStream = streamResult.Stream;
-    await responseMapper.WriteStreamAsync(model, anthropicStream, httpContext.Response.Body, cancellationToken);
-    return Results.Empty;
-});
-
 app.MapPost("/v1/chat/completions", async (
     HttpContext httpContext,
     IOllamaHubConfigProvider configProvider,
@@ -185,33 +126,60 @@ app.MapPost("/v1/chat/completions", async (
     IAnthropicResponseMapper responseMapper,
     IProtocolPassthroughClient passthroughClient,
     ILogger<Program> logger,
-    OpenAIChatCompletionsRequest request,
+    JsonNode? requestJson,
     CancellationToken cancellationToken) =>
 {
-    var model = configProvider.FindModel(request.Model);
+    if (requestJson is not JsonObject requestObject)
+    {
+        return Results.BadRequest(new OllamaErrorResponse
+        {
+            Error = "Request body must be a JSON object."
+        });
+    }
+
+    if (!TryGetString(requestObject, "model", out var modelName))
+    {
+        return Results.BadRequest(new OllamaErrorResponse
+        {
+            Error = "Model name is required."
+        });
+    }
+
+    var model = configProvider.FindModel(modelName);
     if (model is null)
     {
         logger.LogWarning(
             "OpenAI chat completion model not configured. Requested model: {RequestedModel}. Available models: {AvailableModels}",
-            request.Model,
+            modelName,
             string.Join(", ", configProvider.GetModels().Select(m => m.OllamaModelName)));
 
         return Results.NotFound(new OllamaErrorResponse
         {
-            Error = $"Model '{request.Model}' is not configured."
+            Error = $"Model '{modelName}' is not configured."
         });
     }
 
     if (model.SupportsApiMode("openai"))
     {
-        var upstreamRequest = request with { Model = model.ModelId };
-        await passthroughClient.ProxyAsync(httpContext, model, "openai", "/v1/chat/completions", upstreamRequest, cancellationToken);
+        requestObject["model"] = model.ModelId;
+
+        if (model.Extra != null && model.Extra.Count > 0)
+        {
+            // var extraBody = EnsureJsonObjectProperty(requestObject, "extra_body");
+            var extraBody = requestObject["extra_body"] ??= new JsonObject();
+            foreach (var kvp in model.Extra)
+            {
+                extraBody[kvp.Key] = kvp.Value?.DeepClone();
+            }
+        }
+
+        await passthroughClient.ProxyAsync(httpContext, model, "openai", "/v1/chat/completions", requestObject, cancellationToken);
         return Results.Empty;
     }
 
-    var anthropicRequest = requestFactory.Create(model, request);
+    var anthropicRequest = requestFactory.Create(model, requestObject);
 
-    if (!request.Stream)
+    if (!anthropicRequest.Stream)
     {
         var (statusCode, response, error) = await proxyClient.SendAsync(model, anthropicRequest, cancellationToken);
         if (response is null)
@@ -300,6 +268,32 @@ static IResult ToError(HttpStatusCode statusCode, string? error)
         StatusCodes.Status429TooManyRequests => Results.Json(payload, statusCode: StatusCodes.Status429TooManyRequests),
         _ => Results.Json(payload, statusCode: StatusCodes.Status502BadGateway)
     };
+}
+
+static bool TryGetString(JsonObject jsonObject, string propertyName, out string value)
+{
+    value = string.Empty;
+    if (jsonObject[propertyName] is not JsonValue jsonValue
+        || !jsonValue.TryGetValue<string>(out var stringValue)
+        || string.IsNullOrWhiteSpace(stringValue))
+    {
+        return false;
+    }
+
+    value = stringValue;
+    return true;
+}
+
+static JsonObject EnsureJsonObjectProperty(JsonObject jsonObject, string propertyName)
+{
+    if (jsonObject[propertyName] is JsonObject childObject)
+    {
+        return childObject;
+    }
+
+    var child = new JsonObject();
+    jsonObject[propertyName] = child;
+    return child;
 }
 
 static bool TryHandleCommand(string[] args, string configPath)
