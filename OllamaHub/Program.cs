@@ -245,9 +245,9 @@ static OllamaModelDescriptor ToDescriptor(ResolvedModelConfig model) =>
         Digest = OllamaHubConfigLoader.BuildDigest(model),
         Details = new OllamaModelDetails
         {
-            Family = model.Family,
-            Families = [model.Family],
-            ParameterSize = model.ContextLength.ToString(),
+            Family = "",
+            Families = [""],
+            ParameterSize = "",
             QuantizationLevel = "proxy"
         }
     };
