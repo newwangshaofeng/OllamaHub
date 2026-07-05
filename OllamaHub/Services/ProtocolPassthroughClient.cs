@@ -1,4 +1,4 @@
-using System.Net.Http.Headers;
+﻿using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using OllamaHub.Configuration;
@@ -101,7 +101,8 @@ public sealed class ProtocolPassthroughClient(HttpClient httpClient, ILogger<Pro
         if (payload is not null)
         {
             var requestBody = JsonSerializer.Serialize(payload, JsonOptions);
-            upstreamRequest.Content = new StringContent(requestBody, Encoding.UTF8, httpContext.Request.ContentType ?? "application/json");
+            upstreamRequest.Content = new StringContent(requestBody, Encoding.UTF8);
+            upstreamRequest.Content.Headers.ContentType = new MediaTypeHeaderValue(httpContext.Request.ContentType ?? "application/json");
         }
 
         CopyRequestHeaders(httpContext.Request, upstreamRequest);
@@ -115,7 +116,8 @@ public sealed class ProtocolPassthroughClient(HttpClient httpClient, ILogger<Pro
         foreach (var header in request.Headers)
         {
             if (string.Equals(header.Key, "Host", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(header.Key, "Content-Length", StringComparison.OrdinalIgnoreCase))
+                || string.Equals(header.Key, "Content-Length", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(header.Key, "Content-Type", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
