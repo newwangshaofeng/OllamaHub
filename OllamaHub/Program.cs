@@ -201,18 +201,6 @@ static bool TryGetString(JsonObject jsonObject, string propertyName, out string 
     return true;
 }
 
-static JsonObject EnsureJsonObjectProperty(JsonObject jsonObject, string propertyName)
-{
-    if (jsonObject[propertyName] is JsonObject childObject)
-    {
-        return childObject;
-    }
-
-    var child = new JsonObject();
-    jsonObject[propertyName] = child;
-    return child;
-}
-
 static bool TryHandleCommand(string[] args, string configPath)
 {
     if (args.Length == 0)
@@ -321,13 +309,17 @@ async Task<IResult> HandleChatCompletionsAsync(
 
         if (model.Extra != null && model.Extra.Count > 0)
         {
-            // var extraBody = EnsureJsonObjectProperty(requestObject, "extra_body");
-            var extraBody = requestObject["extra_body"] ??= new JsonObject();
             foreach (var kvp in model.Extra)
             {
-                extraBody[kvp.Key] = kvp.Value?.DeepClone();
+                requestObject[kvp.Key] = kvp.Value?.DeepClone();
             }
         }
+
+        if (model.Temperature.HasValue && !requestObject.ContainsKey("temperature"))
+            requestObject["temperature"] = model.Temperature.Value;
+
+        if (model.TopP.HasValue && !requestObject.ContainsKey("top_p"))
+            requestObject["top_p"] = model.TopP.Value;
 
         await passthroughClient.ProxyAsync(httpContext, model, "openai", "/v1/chat/completions", requestObject, cancellationToken);
         return Results.Empty;

@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
@@ -110,7 +110,7 @@ public sealed class ProtocolPassthroughClientTests
     }
 
     [Fact]
-    public async Task ProxyAsync_OpenAiJsonNode_AllowsMergingClonedExtraBodyFields()
+    public async Task ProxyAsync_OpenAiJsonNode_MergesModelExtraFieldsAtTopLevel()
     {
         var handler = new CapturingHandler();
         using var httpClient = new HttpClient(handler);
@@ -123,21 +123,19 @@ public sealed class ProtocolPassthroughClientTests
         var payload = JsonNode.Parse("""
         {
           "model": "alias-model",
-          "extra_body": {
-            "existing": true
-          }
+          "messages": [
+            {"role": "user", "content": "Hello!"}
+          ]
         }
         """)!.AsObject();
 
-        var extraBody = payload["extra_body"]!.AsObject();
+        payload["model"] = "deepseek/deepseek-v4-pro";
+
         var modelExtraValue = JsonNode.Parse("""
         {
-          "enabled": true
+          "type": "enabled"
         }
         """);
-
-        extraBody["provider_options"] = modelExtraValue!.DeepClone();
-        payload["model"] = "deepseek/deepseek-v4-pro";
 
         var model = new ResolvedModelConfig
         {
@@ -151,16 +149,24 @@ public sealed class ProtocolPassthroughClientTests
             AnthropicModel = "deepseek/deepseek-v4-pro",
             Extra = new Dictionary<string, JsonNode?>
             {
-                ["provider_options"] = modelExtraValue
+                ["thinking"] = modelExtraValue,
+                ["reasoning_effort"] = JsonValue.Create("high")
             }
         };
+
+        // Merge model.Extra fields at top level (same behavior as HandleChatCompletionsAsync)
+        foreach (var kvp in model.Extra)
+        {
+            payload[kvp.Key] = kvp.Value?.DeepClone();
+        }
 
         await client.ProxyAsync(httpContext, model, "openai", "/v1/chat/completions", payload, CancellationToken.None);
 
         Assert.NotNull(handler.RequestBody);
         using var json = JsonDocument.Parse(handler.RequestBody!);
-        Assert.True(json.RootElement.GetProperty("extra_body").GetProperty("existing").GetBoolean());
-        Assert.True(json.RootElement.GetProperty("extra_body").GetProperty("provider_options").GetProperty("enabled").GetBoolean());
+        Assert.True(json.RootElement.GetProperty("thinking").GetProperty("type").GetString() == "enabled");
+        Assert.Equal("high", json.RootElement.GetProperty("reasoning_effort").GetString());
+        Assert.Equal("deepseek/deepseek-v4-pro", json.RootElement.GetProperty("model").GetString());
     }
 
     [Fact]
