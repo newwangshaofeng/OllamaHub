@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
 using OllamaHub.Configuration;
 using OllamaHub.Contracts;
@@ -408,6 +408,7 @@ public sealed class AnthropicResponseMapper : IAnthropicResponseMapper
         {
             "end_turn" => "stop",
             "max_tokens" => "length",
+            "tool_use" => "tool_calls",
             _ => stopReason
         };
     }

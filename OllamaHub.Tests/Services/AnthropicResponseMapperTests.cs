@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using OllamaHub.Configuration;
@@ -8,8 +8,13 @@ using Xunit;
 
 namespace OllamaHub.Tests.Services;
 
+/// <summary>
+/// 验证 <see cref="AnthropicResponseMapper"/> 将 Anthropic Messages API 响应
+/// 转换为 Ollama NDJSON 与 OpenAI Chat Completions（含流式 SSE）格式的行为。
+/// </summary>
 public sealed class AnthropicResponseMapperTests
 {
+    /// <summary>各测试共用的已解析模型配置（Anthropic 提供方）。</summary>
     private static readonly ResolvedModelConfig TestModel = new()
     {
         ModelId = "claude-sonnet-4-5",
@@ -22,6 +27,9 @@ public sealed class AnthropicResponseMapperTests
         AnthropicModel = "claude-sonnet-4-5"
     };
 
+    /// <summary>
+    /// 非流式：多个 text 内容块应拼接为一条 assistant 消息，并映射 done / done_reason。
+    /// </summary>
     [Fact]
     public void MapMessageResponse_CombinesTextBlocks()
     {
@@ -45,10 +53,15 @@ public sealed class AnthropicResponseMapperTests
         Assert.Equal("end_turn", result.DoneReason);
     }
 
+    /// <summary>
+    /// 流式：Anthropic SSE（content_block_delta / message_delta）应转为多行 Ollama NDJSON；
+    /// 文本分块、中间块 done=false，最后一包 done=true 且携带 stop_reason。
+    /// </summary>
     [Fact]
     public async Task WriteStreamAsync_MapsAnthropicSseToOllamaNdjson()
     {
         var mapper = new AnthropicResponseMapper();
+        // 模拟 Anthropic 流式事件：两段文本增量 + 结束原因
         var sse = """
         event: content_block_delta
         data: {"type":"content_block_delta","delta":{"text":"Hello"}}
@@ -91,6 +104,10 @@ public sealed class AnthropicResponseMapperTests
         Assert.Equal("end_turn", last?.DoneReason);
     }
 
+    /// <summary>
+    /// OpenAI 兼容：text + tool_use 块应映射为 message.content、tool_calls 及 finish_reason；
+    /// usage 中 prompt = input + cache_read，total = prompt + completion。
+    /// </summary>
     [Fact]
     public void MapOpenAiResponse_MapsTextAndToolCalls()
     {
@@ -133,6 +150,27 @@ public sealed class AnthropicResponseMapperTests
         Assert.Equal(200, result.Usage?.TotalTokens);
     }
 
+    /// <summary>
+    /// stop_reason 为 tool_use 时，即使没有内容块，finish_reason 也应为 tool_calls。
+    /// </summary>
+    [Fact]
+    public void MapOpenAiResponse_MapsToolUseStopReasonToToolCalls()
+    {
+        var mapper = new AnthropicResponseMapper();
+        var response = new AnthropicMessagesResponse
+        {
+            Content = [],
+            StopReason = "tool_use"
+        };
+
+        var result = mapper.MapOpenAiResponse(TestModel, response);
+
+        Assert.Equal("tool_calls", result.Choices[0].FinishReason);
+    }
+
+    /// <summary>
+    /// OpenAI 流式：文本增量应产出 role delta、content delta、finish_reason=stop，并以 data: [DONE] 结束。
+    /// </summary>
     [Fact]
     public async Task WriteOpenAiStreamAsync_MapsAnthropicSseToOpenAiSse()
     {
@@ -173,6 +211,10 @@ public sealed class AnthropicResponseMapperTests
         Assert.Equal("[DONE]", payloads[^1]);
     }
 
+    /// <summary>
+    /// OpenAI 流式工具调用：content_block_start 映射 tool call 元数据；
+    /// input_json_delta 映射 arguments 增量；stop_reason tool_use 映射 finish_reason tool_calls。
+    /// </summary>
     [Fact]
     public async Task WriteOpenAiStreamAsync_MapsToolCallStartAndArgumentDeltas()
     {
@@ -219,10 +261,13 @@ public sealed class AnthropicResponseMapperTests
         Assert.Single(argsChunk!.Choices[0].Delta.ToolCalls!);
         Assert.Equal(0, argsChunk.Choices[0].Delta.ToolCalls![0].Index);
         Assert.Equal("{\"path\":\"README.md\"}", argsChunk.Choices[0].Delta.ToolCalls![0].Function.Arguments);
-        Assert.Equal("tool_use", finishChunk?.Choices[0].FinishReason);
+        Assert.Equal("tool_calls", finishChunk?.Choices[0].FinishReason);
         Assert.Equal("[DONE]", payloads[^1]);
     }
 
+    /// <summary>
+    /// OpenAI 流式：message_start / message_delta 中的 token 用量应在结束前输出 usage 块（含 cache_read）。
+    /// </summary>
     [Fact]
     public async Task WriteOpenAiStreamAsync_EmitsFinalUsageChunk()
     {

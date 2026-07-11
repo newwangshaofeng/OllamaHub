@@ -8,6 +8,7 @@ using OllamaHub.Interop;
 using OllamaHub.Logging;
 using OllamaHub.Services;
 
+// 优先处理命令行命令；如果命令已处理，则不再启动 Web 服务。
 var configPath = Path.Combine(AppContext.BaseDirectory, OllamaHubConfigLoader.DefaultConfigFileName);
 if (TryHandleCommand(args, configPath))
 {
@@ -18,6 +19,7 @@ if (TryHandleCommand(args, configPath))
 var builder = WebApplication.CreateBuilder(args);
 var logPath = Path.Combine(AppContext.BaseDirectory, "OllamaHub.log");
 
+// 读取应用配置，并根据配置决定日志级别和是否启用控制台输出。
 var appConfig = OllamaHubConfigLoader.LoadConfig(configPath, NullLogger.Instance);
 var minLogLevel = appConfig.Logging.GetLogLevel();
 var enableConsoleLogging = WindowsConsoleManager.ShouldEnableConsole(minLogLevel);
@@ -41,6 +43,7 @@ using var startupLoggerFactory = LoggerFactory.Create(logging =>
 var startupLogger = startupLoggerFactory.CreateLogger("Startup");
 startupLogger.LogInformation("Loaded configuration from {ConfigPath}", configPath);
 
+// 替换默认日志提供器，统一写入文件，并在需要时输出到控制台。
 builder.Logging.ClearProviders();
 builder.Logging.AddProvider(new FileLoggerProvider(logPath, minLogLevel));
 
@@ -54,11 +57,13 @@ if (appConfig.Server.Urls.Count > 0)
     builder.WebHost.UseUrls(appConfig.Server.Urls.ToArray());
 }
 
+// 保持 JSON 属性名不被自动转换，避免影响兼容 OpenAI/Ollama 的响应字段。
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = null;
 });
 
+// 注册配置、请求转换、响应映射和上游代理相关服务。
 builder.Services.AddSingleton<IOllamaHubConfigProvider, OllamaHubConfigLoader>();
 builder.Services.AddSingleton<IAnthropicRequestFactory, AnthropicRequestFactory>();
 builder.Services.AddSingleton<IAnthropicResponseMapper, AnthropicResponseMapper>();
@@ -67,16 +72,21 @@ builder.Services.AddHttpClient<IProtocolPassthroughClient, ProtocolPassthroughCl
 
 var app = builder.Build();
 
+// 基础健康检查和 Ollama 兼容接口。
 app.MapGet("/", () => Results.Ok(new { name = "OllamaHub", status = "ok" }));
 app.MapGet("/api/version", () => Results.Ok(new { version = "0.12.6" }));
 app.MapGet("/api/ps", () => Results.Ok(new { models = Array.Empty<object>() }));
 
+// 返回 Ollama 和 OpenAI 兼容格式的模型列表。
 app.MapGet("/api/tags", (IOllamaHubConfigProvider configProvider) =>
     Results.Ok(new OllamaTagListResponse
     {
         Models = configProvider.GetModels().Select(ToDescriptor).ToArray()
     }));
+app.MapGet("/v1/models", GetOpenAiModels);
+app.MapGet("/models", GetOpenAiModels);
 
+// 查询指定模型的 Ollama 兼容详情。
 app.MapPost("/api/show", (IOllamaHubConfigProvider configProvider, OllamaShowRequest request) =>
 {
     var modelName = request.Model;
@@ -120,9 +130,12 @@ app.MapPost("/api/show", (IOllamaHubConfigProvider configProvider, OllamaShowReq
 });
 
 
+// 兼容多个 OpenAI Chat Completions 路径，统一交给同一个处理函数。
 app.MapPost("/v1/chat/completions", HandleChatCompletionsAsync);
 app.MapPost("/openai/v1/chat/completions", HandleChatCompletionsAsync);
+app.MapPost("/chat/completions", HandleChatCompletionsAsync);
 
+// 对未识别路由返回统一错误；未识别的 POST 请求额外记录错误日志。
 app.MapFallback((HttpContext httpContext, ILogger<Program> logger) =>
 {
     if (HttpMethods.IsPost(httpContext.Request.Method))
@@ -136,6 +149,7 @@ app.MapFallback((HttpContext httpContext, ILogger<Program> logger) =>
     });
 });
 
+// 应用启动后输出最终监听地址，便于排查绑定配置。
 app.Lifetime.ApplicationStarted.Register(() =>
 {
     var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
@@ -153,6 +167,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
 
 app.Run();
 
+// 将内部模型配置转换为 Ollama /api/tags 使用的模型描述。
 static OllamaModelDescriptor ToDescriptor(ResolvedModelConfig model) =>
     new()
     {
@@ -170,6 +185,21 @@ static OllamaModelDescriptor ToDescriptor(ResolvedModelConfig model) =>
         }
     };
 
+// 返回 OpenAI /v1/models 兼容的模型列表。
+static IResult GetOpenAiModels(IOllamaHubConfigProvider configProvider) =>
+    Results.Ok(new
+    {
+        @object = "list",
+        data = configProvider.GetModels().Select(model => new
+        {
+            id = model.OllamaModelName,
+            @object = "model",
+            created = 0,
+            owned_by = model.ProviderId
+        }).ToArray()
+    });
+
+// 将上游错误状态码转换为当前 API 的统一错误响应。
 static IResult ToError(HttpStatusCode statusCode, string? error)
 {
     var payload = new OllamaErrorResponse
@@ -188,6 +218,7 @@ static IResult ToError(HttpStatusCode statusCode, string? error)
     };
 }
 
+// 从 JSON 对象中读取非空字符串属性。
 static bool TryGetString(JsonObject jsonObject, string propertyName, out string value)
 {
     value = string.Empty;
@@ -202,6 +233,7 @@ static bool TryGetString(JsonObject jsonObject, string propertyName, out string 
     return true;
 }
 
+// 处理命令行模式，例如安全写入 API Key；返回 true 表示命令已处理。
 static bool TryHandleCommand(string[] args, string configPath)
 {
     if (args.Length == 0)
@@ -263,6 +295,7 @@ static void SetProtectedApiKey(string configPath, string target, string apiKey)
     OllamaHubConfigLoader.SetProtectedApiKey(configPath, target, protectedApiKey);
 }
 
+// 处理 OpenAI Chat Completions 请求，并根据模型配置选择透传 OpenAI 或转换为 Anthropic 请求。
 async Task<IResult> HandleChatCompletionsAsync(
     HttpContext httpContext,
     IOllamaHubConfigProvider configProvider,
@@ -304,6 +337,7 @@ async Task<IResult> HandleChatCompletionsAsync(
         });
     }
 
+    // 支持 OpenAI 协议的模型直接透传，同时合并模型级默认参数。
     if (model.SupportsApiMode("openai"))
     {
         requestObject["model"] = model.ModelId;
@@ -326,6 +360,7 @@ async Task<IResult> HandleChatCompletionsAsync(
         return Results.Empty;
     }
 
+    // 非 OpenAI 协议模型会转换为 Anthropic 请求，并在返回时映射回 OpenAI 格式。
     var anthropicRequest = requestFactory.Create(model, requestObject);
 
     if (!anthropicRequest.Stream)
@@ -339,6 +374,7 @@ async Task<IResult> HandleChatCompletionsAsync(
         return Results.Ok(responseMapper.MapOpenAiResponse(model, response));
     }
 
+    // 流式响应以 SSE 形式返回给客户端。
     var streamResult = await proxyClient.SendStreamAsync(model, anthropicRequest, cancellationToken);
     if (streamResult.Stream is null)
     {
