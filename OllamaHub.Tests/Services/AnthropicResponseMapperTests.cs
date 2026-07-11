@@ -307,4 +307,86 @@ public sealed class AnthropicResponseMapperTests
         Assert.Equal(200, usageChunk?.Usage?.TotalTokens);
         Assert.Equal("[DONE]", payloads[^1]);
     }
+
+    /// <summary>
+    /// OpenAI 兼容：max_tokens stop_reason 应映射为 finish_reason=length。
+    /// </summary>
+    [Fact]
+    public void MapOpenAiResponse_MapsMaxTokensStopReasonToLength()
+    {
+        var mapper = new AnthropicResponseMapper();
+        var response = new AnthropicMessagesResponse
+        {
+            Content =
+            [
+                new AnthropicContentBlock { Type = "text", Text = "partial" }
+            ],
+            StopReason = "max_tokens"
+        };
+
+        var result = mapper.MapOpenAiResponse(TestModel, response);
+
+        Assert.Equal("length", result.Choices[0].FinishReason);
+        Assert.Equal("partial", result.Choices[0].Message.Content?.GetValue<string>());
+    }
+
+    /// <summary>
+    /// OpenAI 兼容：空 token 用量仍应输出 usage 对象，避免调用方因 null 分支丢失统计字段。
+    /// </summary>
+    [Fact]
+    public void MapOpenAiResponse_MapsEmptyUsageToZeroUsage()
+    {
+        var mapper = new AnthropicResponseMapper();
+        var response = new AnthropicMessagesResponse
+        {
+            Content = [],
+            StopReason = "end_turn",
+            Usage = new AnthropicUsage()
+        };
+
+        var result = mapper.MapOpenAiResponse(TestModel, response);
+
+        Assert.NotNull(result.Usage);
+        Assert.Equal(0, result.Usage.PromptTokens);
+        Assert.Equal(0, result.Usage.CompletionTokens);
+        Assert.Equal(0, result.Usage.TotalTokens);
+    }
+
+    /// <summary>
+    /// Ollama 流式：非 data 行和 [DONE] 负载应被忽略，只输出有效内容增量。
+    /// </summary>
+    [Fact]
+    public async Task WriteStreamAsync_IgnoresNonDataAndDoneLines()
+    {
+        var mapper = new AnthropicResponseMapper();
+        var sse = """
+        : keep-alive
+        event: content_block_delta
+        data: {"type":"content_block_delta","delta":{"text":"Hello"}}
+
+        data: [DONE]
+
+        """;
+
+        await using var input = new MemoryStream(Encoding.UTF8.GetBytes(sse));
+        await using var output = new MemoryStream();
+
+        await mapper.WriteStreamAsync(TestModel, input, output, CancellationToken.None);
+
+        output.Position = 0;
+        using var reader = new StreamReader(output, Encoding.UTF8);
+        var lines = new List<string>();
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            if (!string.IsNullOrWhiteSpace(line))
+            {
+                lines.Add(line);
+            }
+        }
+
+        var chunk = Assert.Single(lines);
+        var result = JsonSerializer.Deserialize<OllamaChatChunkResponse>(chunk);
+        Assert.Equal("Hello", result?.Message.Content);
+        Assert.False(result?.Done);
+    }
 }

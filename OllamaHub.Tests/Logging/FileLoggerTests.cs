@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using OllamaHub.Logging;
 using Xunit;
 
@@ -116,6 +116,33 @@ public sealed class FileLoggerTests
             Assert.Contains("warning message", content);
             Assert.Contains("[Error]", content);
             Assert.Contains("error message", content);
+        }
+        finally
+        {
+            if (File.Exists(logPath))
+            {
+                File.Delete(logPath);
+            }
+        }
+    }
+
+    [Fact]
+    public void Log_ErrorLevel_WritesExceptionDetails()
+    {
+        var logPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.log");
+
+        try
+        {
+            var logger = new FileLoggerProvider(logPath, LogLevel.Error).CreateLogger("TestLogger");
+            var exception = new InvalidOperationException("boom");
+
+            logger.LogError(exception, "error message");
+
+            var content = File.ReadAllText(logPath);
+            Assert.Contains("[Error]", content);
+            Assert.Contains("error message", content);
+            Assert.Contains(nameof(InvalidOperationException), content);
+            Assert.Contains("boom", content);
         }
         finally
         {

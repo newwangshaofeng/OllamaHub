@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using OllamaHub.Configuration;
 using Xunit;
@@ -407,5 +407,70 @@ public sealed class OllamaHubConfigLoaderTests
         var logging = new LoggingConfig();
 
         Assert.Equal(LogLevel.None, logging.GetLogLevel());
+    }
+
+    [Fact]
+    public void LoadModels_SkipsModelWhenBaseUrlOrApiKeyIsMissing()
+    {
+        var configPath = Path.GetTempFileName();
+
+        try
+        {
+            File.WriteAllText(configPath, """
+            {
+              "providers": [
+                {
+                  "id": "missing-key",
+                  "baseUrl": "https://api.example.com",
+                  "apiMode": "anthropic"
+                }
+              ],
+              "models": [
+                {
+                  "id": "model-a",
+                  "owned_by": "missing-key"
+                }
+              ]
+            }
+            """);
+
+            var models = OllamaHubConfigLoader.LoadModels(configPath, NullLogger.Instance);
+
+            Assert.Empty(models);
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
+    }
+
+    [Fact]
+    public void SetProtectedApiKey_ThrowsWhenTargetDoesNotExist()
+    {
+        var configPath = Path.GetTempFileName();
+
+        try
+        {
+            File.WriteAllText(configPath, """
+            {
+              "providers": [
+                {
+                  "id": "provider-a",
+                  "apiKey": "plain-text"
+                }
+              ],
+              "models": []
+            }
+            """);
+
+            var exception = Assert.Throws<InvalidOperationException>(() =>
+                OllamaHubConfigLoader.SetProtectedApiKey(configPath, "missing", "dpapi:test-value"));
+
+            Assert.Contains("missing", exception.Message);
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
     }
 }

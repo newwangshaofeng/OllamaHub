@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
 using OllamaHub.Configuration;
 using OllamaHub.Contracts;
@@ -415,5 +415,120 @@ public sealed class AnthropicRequestFactoryTests
         Assert.Equal("base64", message.Content[1].Source?.Type);
         Assert.Equal("image/png", message.Content[1].Source?.MediaType);
         Assert.Equal("QUJDRA==", message.Content[1].Source?.Data);
+    }
+
+    [Fact]
+    public void Create_OpenAiRequest_MapsNoneToolChoiceToNull()
+    {
+        var factory = new AnthropicRequestFactory();
+        var model = new ResolvedModelConfig
+        {
+            ModelId = "claude-sonnet-4-5",
+            OllamaModelName = "claude-sonnet-4-5",
+            DisplayName = "Claude Sonnet",
+            ProviderId = "anthropic",
+            ApiModes = ["anthropic"],
+            BaseUrl = "https://api.anthropic.com",
+            ApiKey = "secret",
+            AnthropicModel = "claude-sonnet-4-5"
+        };
+
+        var request = new OpenAIChatCompletionsRequest
+        {
+            Model = "claude-sonnet-4-5",
+            ToolChoice = JsonValue.Create("none"),
+            Messages =
+            [
+                new OpenAIChatMessage { Role = "user", Content = JsonValue.Create("hello") }
+            ]
+        };
+
+        var result = factory.Create(model, request);
+
+        Assert.Null(result.ToolChoice);
+    }
+
+    [Fact]
+    public void Create_OpenAiRequest_PreservesInvalidToolArgumentsAsStringValue()
+    {
+        var factory = new AnthropicRequestFactory();
+        var model = new ResolvedModelConfig
+        {
+            ModelId = "claude-sonnet-4-5",
+            OllamaModelName = "claude-sonnet-4-5",
+            DisplayName = "Claude Sonnet",
+            ProviderId = "anthropic",
+            ApiModes = ["anthropic"],
+            BaseUrl = "https://api.anthropic.com",
+            ApiKey = "secret",
+            AnthropicModel = "claude-sonnet-4-5"
+        };
+
+        var request = new OpenAIChatCompletionsRequest
+        {
+            Model = "claude-sonnet-4-5",
+            Messages =
+            [
+                new OpenAIChatMessage
+                {
+                    Role = "assistant",
+                    ToolCalls =
+                    [
+                        new OpenAIToolCall
+                        {
+                            Id = "call_1",
+                            Function = new OpenAIToolCallFunction
+                            {
+                                Name = "read_file",
+                                Arguments = "not-json"
+                            }
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var result = factory.Create(model, request);
+
+        var toolUse = Assert.Single(Assert.Single(result.Messages).Content, block => block.Type == "tool_use");
+        Assert.Equal("not-json", toolUse.Input?.GetValue<string>());
+    }
+
+    [Fact]
+    public void Create_OpenAiJson_MapsRemoteImageUrlContentPart()
+    {
+        var factory = new AnthropicRequestFactory();
+        var model = new ResolvedModelConfig
+        {
+            ModelId = "claude-sonnet-4-5",
+            OllamaModelName = "claude-sonnet-4-5",
+            DisplayName = "Claude Sonnet",
+            ProviderId = "anthropic",
+            ApiModes = ["anthropic"],
+            BaseUrl = "https://api.anthropic.com",
+            ApiKey = "secret",
+            AnthropicModel = "claude-sonnet-4-5"
+        };
+
+        var request = JsonNode.Parse("""
+        {
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                { "type": "image_url", "image_url": { "url": "https://example.com/image.png" } }
+              ]
+            }
+          ]
+        }
+        """)!.AsObject();
+
+        var result = factory.Create(model, request);
+
+        var message = Assert.Single(result.Messages);
+        var block = Assert.Single(message.Content);
+        Assert.Equal("image", block.Type);
+        Assert.Equal("url", block.Source?.Type);
+        Assert.Equal("https://example.com/image.png", block.Source?.Url);
     }
 }
