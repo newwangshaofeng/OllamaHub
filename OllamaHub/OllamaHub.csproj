@@ -10,4 +10,8 @@
   <ItemGroup Condition="'$(Configuration)' == 'Debug'">
     <Content Remove="settings.json" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NewLife.Extensions.Hosting.AgentService" Version="10.16.2026.701" />
+  </ItemGroup>
 </Project>

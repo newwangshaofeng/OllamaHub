@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging.Abstractions;
+using NewLife.Extensions.Hosting.AgentService;
 using OllamaHub.Configuration;
 using OllamaHub.Contracts;
 using OllamaHub.Interop;
@@ -16,12 +17,21 @@ if (TryHandleCommand(args, configPath))
 }
 
 var builder = WebApplication.CreateBuilder(args);
+var isServiceRun = AgentServiceMode.IsServiceRun(args);
+
+builder.Host.UseAgentService(options =>
+{
+    options.ServiceName = "OllamaHub";
+    options.DisplayName = "OllamaHub";
+    options.Description = "OllamaHub API proxy service";
+});
+
 var logPath = Path.Combine(AppContext.BaseDirectory, "OllamaHub.log");
 
 // 读取应用配置，并根据配置决定日志级别和是否启用控制台输出。
 var appConfig = OllamaHubConfigLoader.LoadConfig(configPath, NullLogger.Instance);
 var minLogLevel = appConfig.Logging.GetLogLevel();
-var enableConsoleLogging = WindowsConsoleManager.ShouldEnableConsole(minLogLevel);
+var enableConsoleLogging = !isServiceRun && WindowsConsoleManager.ShouldEnableConsole(minLogLevel);
 
 if (enableConsoleLogging)
 {
@@ -164,7 +174,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
     }
 });
 
-app.Run();
+await app.RunAsync();
 
 // 将内部模型配置转换为 Ollama /api/tags 使用的模型描述。
 static OllamaModelDescriptor ToDescriptor(ResolvedModelConfig model) =>
