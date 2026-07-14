@@ -59,6 +59,50 @@ public sealed class ProtocolPassthroughClientTests
     }
 
     [Fact]
+    public async Task ProxyAsync_OpenAiBaseUrlAlreadyContainsV1_DoesNotDuplicatePath()
+    {
+        var handler = new CapturingHandler();
+        using var httpClient = new HttpClient(handler);
+        var client = new ProtocolPassthroughClient(httpClient, NullLogger<ProtocolPassthroughClient>.Instance);
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Method = HttpMethods.Post;
+        httpContext.Request.ContentType = "application/json";
+        httpContext.Request.QueryString = new QueryString("?api-version=2026-01-01");
+        httpContext.Response.Body = new MemoryStream();
+
+        var model = new ResolvedModelConfig
+        {
+            ModelId = "deepseek-v4-pro",
+            OllamaModelName = "deepseek-v4-pro",
+            DisplayName = "deepseek-v4-pro",
+            ProviderId = "OpenCodeGeneric",
+            ApiModes = ["openai"],
+            BaseUrl = "https://opencode.ai/zen/go/v1",
+            ApiKey = "secret",
+            AnthropicModel = "deepseek-v4-pro"
+        };
+
+        var payload = new OpenAIChatCompletionsRequest
+        {
+            Model = model.ModelId,
+            Messages =
+            [
+                new OpenAIChatMessage
+                {
+                    Role = "user",
+                    Content = JsonValue.Create("hello")
+                }
+            ]
+        };
+
+        await client.ProxyAsync(httpContext, model, "openai", "/v1/chat/completions", payload, CancellationToken.None);
+
+        Assert.Equal(
+            "https://opencode.ai/zen/go/v1/chat/completions?api-version=2026-01-01",
+            handler.RequestUri?.ToString());
+    }
+
+    [Fact]
     public async Task ProxyAsync_OpenAiJsonNode_PreservesRawJsonFields()
     {
         var handler = new CapturingHandler();
@@ -215,10 +259,13 @@ public sealed class ProtocolPassthroughClientTests
 
     private sealed class CapturingHandler : HttpMessageHandler
     {
+        public Uri? RequestUri { get; private set; }
+
         public string? RequestBody { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            RequestUri = request.RequestUri;
             RequestBody = request.Content is null
                 ? null
                 : await request.Content.ReadAsStringAsync(cancellationToken);

@@ -95,7 +95,7 @@ public sealed class ProtocolPassthroughClient(HttpClient httpClient, ILogger<Pro
 
     private static HttpRequestMessage BuildRequestMessage<TRequest>(HttpContext httpContext, ResolvedModelConfig model, string apiMode, string upstreamPath, TRequest payload)
     {
-        var upstreamUri = $"{model.BaseUrl.TrimEnd('/')}{upstreamPath}{httpContext.Request.QueryString}";
+        var upstreamUri = BuildUpstreamUri(model.BaseUrl, upstreamPath, httpContext.Request.QueryString);
         var upstreamRequest = new HttpRequestMessage(new HttpMethod(httpContext.Request.Method), upstreamUri);
 
         if (payload is not null)
@@ -109,6 +109,31 @@ public sealed class ProtocolPassthroughClient(HttpClient httpClient, ILogger<Pro
         ApplyDefaultProtocolHeaders(upstreamRequest, model, apiMode);
         ApplyConfiguredHeaders(upstreamRequest, model.Headers);
         return upstreamRequest;
+    }
+
+    private static Uri BuildUpstreamUri(string baseUrl, string upstreamPath, QueryString queryString)
+    {
+        var baseUri = new Uri(baseUrl.TrimEnd('/'), UriKind.Absolute);
+        var baseSegments = baseUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var upstreamSegments = upstreamPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var overlap = Math.Min(baseSegments.Length, upstreamSegments.Length);
+
+        while (overlap > 0
+            && !baseSegments[^overlap..].SequenceEqual(upstreamSegments[..overlap], StringComparer.OrdinalIgnoreCase))
+        {
+            overlap--;
+        }
+
+        var remainingPath = string.Join('/', upstreamSegments[overlap..]);
+        var builder = new UriBuilder(baseUri)
+        {
+            Path = string.IsNullOrEmpty(remainingPath)
+                ? baseUri.AbsolutePath
+                : $"{baseUri.AbsolutePath.TrimEnd('/')}/{remainingPath}",
+            Query = queryString.HasValue ? queryString.Value![1..] : string.Empty
+        };
+
+        return builder.Uri;
     }
 
     private static void CopyRequestHeaders(HttpRequest request, HttpRequestMessage upstreamRequest)

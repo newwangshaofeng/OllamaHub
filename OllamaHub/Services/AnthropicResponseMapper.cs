@@ -57,7 +57,7 @@ public sealed class AnthropicResponseMapper : IAnthropicResponseMapper
         await using var writer = new StreamWriter(output, leaveOpen: true);
         string? eventName = null;
 
-        while (!reader.EndOfStream)
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var line = await reader.ReadLineAsync(cancellationToken);
@@ -143,7 +143,7 @@ public sealed class AnthropicResponseMapper : IAnthropicResponseMapper
             ]
         }, cancellationToken);
 
-        while (!reader.EndOfStream)
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var line = await reader.ReadLineAsync(cancellationToken);
