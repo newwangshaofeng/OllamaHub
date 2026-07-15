@@ -2,6 +2,7 @@
   "profiles": {
     "OllamaHub": {
       "commandName": "Project",
+      "commandLineArgs": "-run",
       "launchBrowser": true,
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"

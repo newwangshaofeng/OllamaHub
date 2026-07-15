@@ -31,9 +31,9 @@ var logPath = Path.Combine(AppContext.BaseDirectory, "OllamaHub.log");
 // 读取应用配置，并根据配置决定日志级别和是否启用控制台输出。
 var appConfig = OllamaHubConfigLoader.LoadConfig(configPath, NullLogger.Instance);
 var minLogLevel = appConfig.Logging.GetLogLevel();
-var enableConsoleLogging = !isServiceRun && WindowsConsoleManager.ShouldEnableConsole(minLogLevel);
+var enableConsoleLogging = !isServiceRun && minLogLevel != Microsoft.Extensions.Logging.LogLevel.None;
 
-if (enableConsoleLogging)
+if (!isServiceRun && OperatingSystem.IsWindows())
 {
     WindowsConsoleManager.EnsureConsole();
 }
